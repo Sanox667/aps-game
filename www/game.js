@@ -145,6 +145,7 @@
     squad: [], bossPass: false,
     leninTimer: 12,
     droneTimer: 15, inspectTimer: 30, flood: null,
+    maxTimer: 20,
   };
 
   let installing = { timer: 0, total: 0, spot: null, kind: null };
@@ -153,6 +154,7 @@
   let boss = null;
   let lenin = null; // начальник Ленин: гуляет и тянет монтажника на перекур
   let drone = null; // дрон прораба: облетает объект, может упасть — стройка заново
+  let max = null; // строгий Макс: выгоняет Ленина и срывает перекуры
 
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -433,6 +435,8 @@
     game.droneTimer = 15 + Math.random() * 15;
     game.inspectTimer = 26 + Math.random() * 22;
     game.flood = null;
+    max = null;
+    game.maxTimer = 14 + Math.random() * 18;
 
     if (game.char.squad && Math.random() < 0.3) {
       const n = Math.min(5, game.floorYs.length);
@@ -857,6 +861,127 @@
     ctx.restore();
   }
 
+  // ================= СТРОГИЙ МАКС =================
+  // Врывается, разыскивает Ленина, догоняет и выгоняет его. Перекуры — мимо.
+  function summonMax() {
+    if (!lenin || max) return null;
+    const offset = (Math.random() < 0.5 ? -1 : 1) * 110;
+    max = {
+      floor: lenin.floor,
+      x: clamp(lenin.x + offset, WALL_L + 40, WALL_R - 70),
+      w: 24, h: 40,
+      t: 26,
+      facing: 1,
+    };
+    showToast('Строгий Макс ворвался на объект! Гонится за Лениным.');
+    AudioSys.tone(110, 0.22, 'square', 0.07);
+  }
+
+  function leaveMax(msg) {
+    max = null;
+    game.maxTimer = 26 + Math.random() * 20;
+    if (msg) showToast(msg);
+  }
+
+  function maxUpdate(dt) {
+    if (!max) {
+      game.maxTimer -= dt;
+      if (game.maxTimer <= 0) {
+        if (lenin) summonMax();
+        else game.maxTimer = 7 + Math.random() * 8; // придёт, как только появится Ленин
+      }
+      return;
+    }
+    const M = max;
+
+    if (!lenin) { // Ленин сбежал сам — Макс махнул рукой
+      leaveMax('Ленин скрылся, Макс ни с чем ушёл смотреть другой объект.');
+      return;
+    }
+
+    // гонится: заметно быстрее Ленина (46 px/с)
+    const dir = Math.sign(lenin.x - M.x);
+    if (dir !== 0) { M.x += dir * 100 * dt; M.facing = dir; }
+
+    if (Math.abs(M.x - lenin.x) < 22) {
+      // ДОГНАЛ: перекур под запретом, Ленин гоним с объекта
+      const wasSmoke = lenin.state === 'smoke';
+      const wasCall = lenin.state === 'call';
+      const lx = lenin.x;
+      leaveLenin('Макс разогнал Ленина: Ильич удирал с доской под мышкой!');
+      addFloater(lx, game.floorYs[M.floor] - 64, 'ПОПАЛСЯ, ЛЕНИН!', '#86efac');
+      if (wasSmoke || wasCall) {
+        addFloater(player.x + player.w / 2, player.y - 12, 'МАКС СОРВАЛ ПЕРЕКУР — РАБОТАЙ!', '#86efac');
+      }
+      AudioSys.comboUp();
+      leaveMax('Макс доволен: порядок наведён.');
+      return;
+    }
+
+    M.t -= dt;
+    if (M.t <= 0) leaveMax('Макс потерял Ленина из виду и ушёл.');
+  }
+
+  function drawMax() {
+    if (!max) return;
+    const M = max;
+    const fy = game.floorYs[M.floor];
+    const bob = Math.sin(game.time * 11) * 1.5;
+
+    ctx.save();
+    ctx.translate(M.x, fy);
+    ctx.translate(0, bob);
+    // тень
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(0, 1, 11, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+    if (M.facing < 0) ctx.scale(-1, 1);
+
+    // ноги
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-6, -10, 4.5, 10);
+    ctx.fillRect(2, -10, 4.5, 10);
+    // строгий тёмный костюм
+    ctx.fillStyle = '#1f2937';
+    rr(-9, -30, 18, 21, 3); ctx.fill();
+    // красный галстук
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(-1.5, -28, 3, 10);
+    // бумажки в руке (проверка смены)
+    ctx.fillStyle = '#e2e8f0';
+    ctx.save();
+    ctx.rotate(-0.35);
+    ctx.fillRect(9, -30, 7, 10);
+    ctx.restore();
+    // руки
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(-12, -28, 3.5, 14);
+    // голова: строгие брови, ни бороды ни кепки
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(0, -35, 6.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1c1917';
+    ctx.fillRect(-6, -41, 12, 3); // волосы
+    ctx.fillRect(-3, -38.5, 2.5, 1.6); // брови нахмурены
+    ctx.fillRect(1, -38.5, 2.5, 1.6);
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(1.5, -36, 2, 1.5); // рот линией
+    ctx.restore();
+
+    // злой пузырь во время погони
+    const pulse = 0.55 + 0.45 * Math.sin(game.time * 10);
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.strokeStyle = '#f87171';
+    ctx.lineWidth = 2;
+    rr(M.x - 52, fy - 86, 104, 20, 6);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fca5a5';
+    ctx.font = '700 12px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = pulse;
+    ctx.fillText('ГДЕ ЛЕНИН?!', M.x, fy - 71);
+    ctx.restore();
+  }
+
   function tryLayCable() {
     if (game.state !== 'play' || installing.timer > 0 || player.stun > 0) return;
     if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }    const spot = nearestSpot(false);
@@ -943,6 +1068,15 @@
       game.combo = 0;
       game.comboTimer = 0;
       addFloater(spot.x, spot.y - 14, 'БРАК!', '#f87171');
+      // короткое замыкание: трасса может выгореть — тянуть заново
+      if (spot.cabled && Math.random() < 0.5) {
+        spot.cabled = false;
+        game.cables = game.cables.filter((c) => !(c.floor === spot.floor && Math.abs(c.x2 - spot.x) < 2));
+        spawnSparks(spot.x, spot.y, '#fb923c');
+        addFloater(spot.x, spot.y - 36, 'КЗ! ТРАССА СГОРЕЛА', '#fb923c');
+        AudioSys.alarm();
+        shake = Math.min(10, shake + 5);
+      }
       AudioSys.angry();
       shake = Math.min(9, shake + 4);
       updateHud();
@@ -1198,6 +1332,8 @@
     // дрон прораба и проверка генподрядчика
     droneUpdate(dt);
     inspectUpdate(dt);
+    // строгий Макс — гоняет Ленина
+    maxUpdate(dt);
     if (game.flood) {
       game.flood.t -= dt;
       if (game.flood.t <= 0) game.flood = null;
@@ -1952,6 +2088,7 @@
     drawBuffs();
     drawSquad();
     drawLenin();
+    drawMax();
     drawPlayer();
     drawBoss();
     drawDrone();
@@ -2179,6 +2316,7 @@
     summonLenin, lenin: () => lenin, fitStage, tryFullscreen,
     drone: () => drone, forceDroneDrop: () => { if (!drone) spawnDrone(); if (drone) { drone.state = 'fall'; drone.vy = 30; } },
     inspectForce: inspectNow, forceFlood,
+    summonMax, max: () => max,
     audio: AudioSys,
   };
 
