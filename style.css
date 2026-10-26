@@ -140,6 +140,55 @@ html, body {
 
 .charcard:active { background: #1f2d4d; }
 
+/* мини-игра ППКУ «Сириус» */
+.linkgrid {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.linkcol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.linkb {
+  min-width: 92px;
+  padding: 9px 10px;
+  font: 600 13px "Segoe UI", system-ui, sans-serif;
+  color: var(--text);
+  background: #131d33;
+  border: 1px solid #2b3d63;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.linkb.sel {
+  border-color: #fde047;
+  background: rgba(253, 224, 71, 0.12);
+  box-shadow: 0 0 10px rgba(253, 224, 71, 0.35);
+}
+
+.linkb.bad {
+  border-color: #f87171;
+  background: rgba(248, 113, 113, 0.14);
+  animation: linkShake 0.34s;
+}
+
+@keyframes linkShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+.linklater {
+  width: 100%;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+}
+
 canvas {
   display: block;
   width: 100%;

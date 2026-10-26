@@ -5,6 +5,7 @@
   const ctx = canvas.getContext('2d');
   const W = 960;
   const H = 620;
+  const WORLD_W = W * 4; // мир шире вьюпорта в 4 раза — камера бегает за монтажником
 
   const hud = {
     level: document.getElementById('hud-level'),
@@ -26,7 +27,7 @@
 
   // ---------- константы сцены ----------
   const WALL_L = 56;
-  const WALL_R = 904;
+  const WALL_R = WORLD_W - 56;
   const TOP_Y = 60;
   const GRAVITY = 1600;
   const MOVE_SPEED = 190;
@@ -146,6 +147,7 @@
     leninTimer: 12,
     droneTimer: 15, inspectTimer: 30, flood: null,
     maxTimer: 20,
+    ppku: null,
   };
 
   let installing = { timer: 0, total: 0, spot: null, kind: null };
@@ -313,13 +315,14 @@
 
   function buildLadders(n) {
     const ys = game.floorYs;
-    const xs = [690, 170, 480, 800, 260, 590, 400, 720];
     const out = [];
+    // мир большой — лестниц много, расставляем равномерно по всей ширине
     for (let i = 0; i < n - 1; i++) {
-      const a = xs[(i * 2) % xs.length];
-      const b = xs[(i * 2 + 3) % xs.length];
-      out.push({ x: a, upper: i, lower: i + 1, top: ys[i], bottom: ys[i + 1] });
-      out.push({ x: b, upper: i, lower: i + 1, top: ys[i], bottom: ys[i + 1] });
+      let x = 170 + randInt(0, 70) + (i % 2) * 130;
+      while (x < WALL_R - 90) {
+        out.push({ x, upper: i, lower: i + 1, top: ys[i], bottom: ys[i + 1] });
+        x += 480 + ((i * 7) % 3) * 55;
+      }
     }
     return out;
   }
@@ -329,7 +332,13 @@
     return game.ladders.some((l) => (l.top === fy || l.bottom === fy) && Math.abs(l.x - x) < dist);
   }
 
-  const WINDOW_ZONES = [[82, 248], [422, 568], [692, 878]];
+  const WINDOW_ZONES = (function buildWindows() {
+    const zones = [];
+    for (let bx = 0; bx + 900 <= WALL_R; bx += 340) {
+      zones.push([bx + 82, bx + 248], [bx + 422, bx + 568], [bx + 692, bx + 878]);
+    }
+    return zones;
+  })();
   function inWindowZone(x) { return WINDOW_ZONES.some((z) => x > z[0] && x < z[1]); }
 
   function devicePool(level) {
@@ -438,6 +447,10 @@
     max = null;
     game.maxTimer = 14 + Math.random() * 18;
     game.failsAtLevel = 0; // счёт срывов сдейла на этом объекте
+    // Лабуба и Леша привозят ППКУ «Сириус» — мини-игра расключения
+    game.ppku = Math.random() < 0.32 ? { floor: 0, x: PANEL_X + 280, done: false } : null;
+    if (game.ppku) showToast('Лабуба и Леша привезли ППКУ «Сириус» — подойди к шкафу и расключи!');
+    snapCamera();
 
     if (game.char.squad && Math.random() < 0.3) {
       const n = Math.min(5, game.floorYs.length);
@@ -447,7 +460,24 @@
           w: 20, h: 32, job: null,
         });
       }
-      showToast('Бригада удалась: ' + n + ' узбеков работают по каждому этажу!');
+      // бригада Шавката сносит всё смонтированное и все трассы
+      for (const s of game.spots) {
+        s.done = false; s.san = false; s.cabled = false; s.brak = false;
+      }
+      game.cables.length = 0;
+      game.installed = 0;
+      showToast('Бригада удалась: ' + n + ' узбеков работают по каждому этажу! Правда, они всё снесли — приборы и линии заново!');
+      AudioSys.win();
+    } else if (!game.char.squad && Math.random() < 0.5) {
+      // Шавкат приходит на помощь другим монтажникам — присылает двоих узбеков
+      const n = Math.min(2, game.floorYs.length);
+      for (let i = 0; i < n; i++) {
+        game.squad.push({
+          floor: randInt(0, game.floorYs.length - 1), x: randInt(WALL_L + 120, WALL_R - 60),
+          timer: 4 + i * 1.5, w: 20, h: 32, job: null,
+        });
+      }
+      showToast('Шавкат прислал помощь: ' + n + ' узбека расключают этажи!');
       AudioSys.win();
     } else if (game.char.squad) {
       showToast('Бригада сегодня не приехала — работаем в одиночку.');
@@ -615,15 +645,15 @@
   function grab(ladder) {
     const m = moveMutators();
     if (Math.random() < m.fall) {
-      // свалился с лестницы
+      // свалился с лестницы (стант убрали — только комбо горит)
       player.climbing = null;
       player.x = ladder.x - player.w / 2;
       player.y = ladder.bottom - player.h;
       player.vy = 0;
-      player.stun = 0.5;
+      player.stun = 0;
       game.combo = 0;
       game.comboTimer = 0;
-      shake = 6;
+      shake = 4;
       AudioSys.caught();
       addFloater(ladder.x, ladder.bottom - 60, 'СВАЛИЛСЯ!', '#f87171');
       showToast('Свалился с лестницы! Комбо сгорело.');
@@ -662,7 +692,7 @@
     if (lenin) return;
     const pf = onFloorPlayer();
     const floor = pf >= 0 ? pf : randInt(0, game.floorYs.length - 1);
-    const playerOnSide = player.x + player.w / 2 > W / 2;
+    const playerOnSide = player.x + player.w / 2 > WORLD_W / 2;
     lenin = {
       floor, x: playerOnSide ? WALL_L + 70 : WALL_R - 90, w: 26, h: 42,
       state: 'walk', t: 15 + Math.random() * 8, smokeT: 0, facing: 1, cool: 3,
@@ -732,9 +762,9 @@
         L.cool = 9;
         // уходит в противоположную от монтажника сторону
         const pcx = player.x + player.w / 2;
-        L.targetX = pcx > W / 2
-          ? randInt(WALL_L + 100, W / 2 - 90)
-          : randInt(W / 2 + 90, WALL_R - 130);
+        L.targetX = pcx > WORLD_W / 2
+          ? randInt(WALL_L + 100, WORLD_W / 2 - 90)
+          : randInt(WORLD_W / 2 + 90, WALL_R - 130);
       }
     }
   }
@@ -744,7 +774,7 @@
   function spawnDrone() {
     const fromLeft = Math.random() < 0.5;
     drone = {
-      x: fromLeft ? -46 : W + 46,
+      x: fromLeft ? -46 : WORLD_W + 46,
       y: 24,
       vx: (fromLeft ? 1 : -1) * (58 + Math.random() * 22),
       vy: 0,
@@ -771,7 +801,7 @@
         D.state = 'fall';
         D.vy = 30;
         AudioSys.tone(880, 0.12, 'sawtooth', 0.06);
-      } else if ((D.vx > 0 && D.x > W + 60) || (D.vx < 0 && D.x < -60)) {
+      } else if ((D.vx > 0 && D.x > WORLD_W + 60) || (D.vx < 0 && D.x < -60)) {
         drone = null;
         game.droneTimer = 30 + Math.random() * 26;
       }
@@ -843,20 +873,20 @@
     ctx.beginPath();
     ctx.moveTo(0, H);
     ctx.lineTo(0, top + 5);
-    for (let x = 0; x <= W; x += 42) {
+    for (let x = WALL_L; x <= WALL_R; x += 42) {
       ctx.lineTo(x, top + Math.sin(game.time * 2.6 + x * 0.045) * 5);
     }
-    ctx.lineTo(W, top + 5);
-    ctx.lineTo(W, H);
+    ctx.lineTo(WALL_R, top + 5);
+    ctx.lineTo(WALL_R, H);
     ctx.closePath();
     ctx.fill();
     // блики на воде
     ctx.strokeStyle = 'rgba(165, 243, 252, 0.5)';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    for (let x = 0; x <= W; x += 42) {
+    for (let x = WALL_L; x <= WALL_R; x += 42) {
       const y = top + Math.sin(game.time * 2.6 + x * 0.045) * 5;
-      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      if (x === WALL_L) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
     ctx.restore();
@@ -921,6 +951,216 @@
 
     M.t -= dt;
     if (M.t <= 0) leaveMax('Макс потерял Ленина из виду и ушёл.');
+  }
+
+  // ================= ППКУ «СИРИУС» (Лабуба и Леша) =================
+  // Мини-игра расключения: соединяй провода X1..X6 с клеммами.
+  let lk = null; // состояние мини-игры
+
+  function shuffleArr(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = randInt(0, i);
+      const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+  }
+
+  function buildLink() {
+    const names = ['X1', 'X2', 'X3', 'X4', 'X5', 'X6'];
+    const left = names.slice();
+    const right = names.slice();
+    shuffleArr(left);
+    shuffleArr(right);
+    return { left, right, sel: -1, doneN: 0, wrong: -1 };
+  }
+
+  function renderLink() {
+    ovUnlock.innerHTML =
+      '<div class="linkgrid">' +
+      '<div class="linkcol">' + lk.left.map((n, i) =>
+        '<button class="linkb" data-lw="' + i + '">🧵 ' + n + '</button>').join('') + '</div>' +
+      '<div class="linkcol">' + lk.right.map((n, i) =>
+        '<button class="linkb' + (lk.wrong === i ? ' bad' : '') + '" data-lk="' + i + '">' + n + '</button>').join('') + '</div>' +
+      '</div>' +
+      '<button class="linkb linklater" data-lklater="1">Не сейчас — соберу позже</button>';
+  }
+
+  function startLinkGame() {
+    game.state = 'link';
+    lk = buildLink();
+    ovTitle.textContent = 'Расключи ППКУ «Сириус»';
+    ovText.textContent = 'Тапни провод, затем его клемму. Лабуба и Леша смотрят строго!';
+    ovBtn.hidden = true;
+    renderLink();
+    overlay.classList.remove('hidden');
+    AudioSys.installStart();
+  }
+
+  function finishLink() {
+    game.ppku.done = true;
+    game.score += 80;
+    if (game.score > game.best) { game.best = game.score; saveBest(); }
+    AudioSys.win();
+    addFloater(game.ppku.x, game.floorYs[game.ppku.floor] - 96, 'ППКУ ГОТОВ +80', '#4ade80');
+    showToast('Шкаф «Сириус» расключён! Лабуба и Леша довольны. +80');
+    lk = null;
+    game.state = 'play';
+    hideOverlay();
+    updateHud();
+  }
+
+  function linkClick(e) {
+    const lw = e.target.closest('[data-lw]');
+    if (lw) {
+      lk.sel = Number(lw.getAttribute('data-lw'));
+      lk.wrong = -1;
+      renderLink();
+      AudioSys.tone(500, 0.05, 'square', 0.05);
+      return true;
+    }
+    const kl = e.target.closest('[data-lk]');
+    if (kl) {
+      const ki = Number(kl.getAttribute('data-lk'));
+      if (lk.sel < 0) return true;
+      if (lk.left[lk.sel] === lk.right[ki]) {
+        // клемма подошла — пары больше нет
+        lk.left.splice(lk.sel, 1);
+        lk.right.splice(ki, 1);
+        lk.doneN += 1;
+        lk.sel = -1;
+        AudioSys.comboUp();
+        if (lk.left.length === 0) finishLink();
+        else renderLink();
+      } else {
+        lk.wrong = ki;
+        renderLink();
+        AudioSys.angry();
+        shake = Math.min(8, shake + 3);
+        window.setTimeout(() => {
+          if (lk && game.state === 'link') { lk.wrong = -1; renderLink(); }
+        }, 380);
+      }
+      return true;
+    }
+    const later = e.target.closest('[data-lklater]');
+    if (later) {
+      lk = null;
+      game.state = 'play';
+      ovBtn.hidden = false;
+      hideOverlay();
+      return true;
+    }
+    return false;
+  }
+
+  function drawPpku() {
+    if (!game.ppku) return;
+    const s = game.ppku;
+    const fy = game.floorYs[s.floor];
+
+    // инженеры: Лабуба (ушастая) слева, Леша красивый справа
+    drawLabuba(s.x - 44, fy);
+    drawLesha(s.x + 44, fy);
+
+    ctx.save();
+    ctx.translate(s.x, fy);
+    // корпус шкафа
+    ctx.fillStyle = '#2f3a4f';
+    rr(-26, -78, 52, 78, 5); ctx.fill();
+    ctx.fillStyle = '#47566f';
+    rr(-22, -74, 44, 70, 4); ctx.fill();
+    // дверца/окно индикации
+    ctx.fillStyle = '#1a2338';
+    rr(-16, -68, 32, 20, 3); ctx.fill();
+    for (let i = 0; i < 3; i++) {
+      const blink = s.done ? 1 : (Math.sin(game.time * 5 + i * 2) > 0 ? 1 : 0.35);
+      ctx.fillStyle = s.done ? 'rgba(74, 222, 128,' + blink + ')' : 'rgba(248, 113, 113,' + blink + ')';
+      ctx.fillRect(-12 + i * 11, -63, 7, 5);
+    }
+    // ручка
+    ctx.fillStyle = '#9aa7bf';
+    ctx.fillRect(16, -30, 4, 12);
+    // табличка «СИРИУС»
+    ctx.fillStyle = '#0b1224';
+    rr(-19, -46, 38, 12, 2); ctx.fill();
+    ctx.fillStyle = '#93c5fd';
+    ctx.font = '700 8px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('СИРИУС', 0, -37);
+    // подпись внизу
+    ctx.fillStyle = s.done ? '#4ade80' : '#fbbf24';
+    ctx.font = '700 11px "Segoe UI", sans-serif';
+    ctx.fillText(s.done ? 'ГОТОВ' : 'ППКУ', 0, -4);
+    ctx.restore();
+
+    // подсказка рядом
+    if (!s.done && onFloorPlayer() === s.floor && Math.abs(player.x + player.w / 2 - s.x) < 80) {
+      ctx.save();
+      ctx.fillStyle = '#bfdbfe';
+      ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('SPACE', s.x, fy - 96);
+      ctx.restore();
+    }
+  }
+
+  function drawLabuba(x, fy) {
+    // милашка-инженер: круглая голова, огромные уши
+    const bob = Math.sin(game.time * 3) * 1.4;
+    ctx.save();
+    ctx.translate(x, fy); ctx.translate(0, bob);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(0, 1, 9, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#a3705a'; // шоколадный костюм
+    rr(-7, -22, 14, 22, 6); ctx.fill();
+    ctx.fillStyle = '#8c5a45';
+    ctx.fillRect(-5, -12, 3, 4);
+    ctx.fillRect(2, -12, 3, 4);
+    // голова
+    ctx.fillStyle = '#b98870';
+    ctx.beginPath(); ctx.arc(0, -27, 7.5, 0, Math.PI * 2); ctx.fill();
+    // уши-лопухи
+    ctx.beginPath(); ctx.arc(-9, -33, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(9, -33, 4.5, 0, Math.PI * 2); ctx.fill();
+    // огромные глаза
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-3, -28, 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3, -28, 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0b1224';
+    ctx.beginPath(); ctx.arc(-3, -28, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3, -28, 1.2, 0, Math.PI * 2); ctx.fill();
+    // кепочка инженера
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath(); ctx.arc(0, -31, 6.5, Math.PI, 0); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawLesha(x, fy) {
+    // Леша красивый: очки, рубашка, уверенная поза
+    const bob = Math.sin(game.time * 2.4 + 2) * 1.2;
+    ctx.save();
+    ctx.translate(x, fy); ctx.translate(0, bob);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(0, 1, 9, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+    // ноги и рубашка
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(-6, -10, 4.5, 10);
+    ctx.fillRect(2, -10, 4.5, 10);
+    ctx.fillStyle = '#e0f2fe';
+    rr(-8, -28, 16, 19, 4); ctx.fill();
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(-1.5, -26, 3, 12);
+    // голова с очками
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(0, -33, 6.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#422006';
+    ctx.fillRect(-7, -40, 14, 3.5);
+    // очки
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(-5.5, -35.5, 4.5, 4);
+    ctx.strokeRect(1, -35.5, 4.5, 4);
+    ctx.beginPath(); ctx.moveTo(-1, -34); ctx.lineTo(1, -34); ctx.stroke();
+    ctx.restore();
   }
 
   function drawMax() {
@@ -1002,6 +1242,12 @@
   function tryInstall() {
     if (game.state !== 'play' || installing.timer > 0 || player.stun > 0) return;
     if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }
+    // шкаф ППКУ «Сириус» от Лабубы и Леши — расключение
+    if (game.ppku && !game.ppku.done && onFloorPlayer() === game.ppku.floor &&
+        Math.abs(player.x + player.w / 2 - game.ppku.x) < 80) {
+      startLinkGame();
+      return;
+    }
     if (game.acceptance) { tryAccept(); return; }
     const spot = nearestSpot(true);
     if (!spot) {
@@ -1274,9 +1520,21 @@
 
   // ================= ОБНОВЛЕНИЕ =================
   let lastTickSec = -1;
+  // ================= КАМЕРА =================
+  let cam = 0; // смещение камеры по X в мире
+  function updateCamera(dt) {
+    const target = clamp(player.x + player.w / 2 - W / 2, 0, WORLD_W - W);
+    cam += (target - cam) * Math.min(1, dt * 6);
+  }
+
+  function snapCamera() {
+    cam = clamp(player.x + player.w / 2 - W / 2, 0, WORLD_W - W);
+  }
+
   function update(dt) {
     game.time += dt;
     shake = Math.max(0, shake - 40 * dt);
+    updateCamera(dt);
 
     if (game.state !== 'play') { updateEffects(dt); return; }
 
@@ -1504,14 +1762,14 @@
     sky.addColorStop(0, pal.sky1);
     sky.addColorStop(1, pal.sky2);
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, WORLD_W, H);
 
     // дальний город (параллакс-слоёный силуэт)
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
     let bx = 0;
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    while (bx < W) {
+    while (bx < WORLD_W) {
       const bw = 60 + rnd() * 90;
       const bh = 60 + rnd() * 200;
       ctx.fillRect(bx, H - 60 - bh, bw, bh);
@@ -1519,8 +1777,8 @@
     }
     // ночные окна города
     ctx.fillStyle = 'rgba(255, 220, 120, 0.14)';
-    for (let i = 0; i < 40; i++) {
-      const wx = 20 + ((i * 97) % (W - 30));
+    for (let i = 0; i < 160; i++) {
+      const wx = 20 + ((i * 97) % (WORLD_W - 30));
       const wy = 120 + ((i * 61) % (H - 220));
       ctx.fillRect(wx, wy, 6, 8);
     }
@@ -1536,21 +1794,26 @@
 
     // ящики на складе
     if (game.object.crates) {
-      for (const fy of game.floorYs) {
-        for (let i = 0; i < 5; i++) {
-          const cx = 620 + i * 52 + ((fy * 37) % 30);
-          ctx.fillStyle = 'rgba(120, 90, 40, 0.55)';
-          rr(cx, fy - 26, 40, 26, 3); ctx.fill();
-          ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(cx, fy - 26); ctx.lineTo(cx + 40, fy); ctx.stroke();
+      for (let base = WALL_L; base < WALL_R; base += 960) {
+        for (const fy of game.floorYs) {
+          for (let i = 0; i < 5; i++) {
+            const cx = base + 620 + i * 52 + ((fy * 37) % 30);
+            if (cx > WALL_R - 60) continue;
+            ctx.fillStyle = 'rgba(120, 90, 40, 0.55)';
+            rr(cx, fy - 26, 40, 26, 3); ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx, fy - 26); ctx.lineTo(cx + 40, fy); ctx.stroke();
+          }
         }
       }
     }
 
-    // окна с лучами
-    drawWindow(90, 80, 150, 58, pal);
-    drawWindow(430, 80, 130, 58, pal);
-    drawWindow(700, 80, 170, 58, pal);
+    // окна с лучами — по всему объекту
+    for (let wx = WALL_L; wx < WALL_R - 900; wx += 960) {
+      drawWindow(wx + 90, 80, 150, 58, pal);
+      drawWindow(wx + 430, 80, 130, 58, pal);
+      drawWindow(wx + 700, 80, 170, 58, pal);
+    }
 
     // пыль
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
@@ -2108,12 +2371,17 @@
     ctx.save();
     if (shake > 0) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
 
+    // мир большой: камера следует за монтажником
+    ctx.save();
+    ctx.translate(-cam, 0);
+
     drawBackground(pal);
     for (const fy of game.floorYs) drawFloor(fy);
     for (const l of game.ladders) drawLadder(l);
     drawBoxes(pal);
     for (const c of game.cables) drawCable(c);
     drawPanel(pal);
+    drawPpku();
     drawFlood();
     const activeSpot = installing.spot || nearestSpot();
     for (const s of game.spots) drawSpot(s, activeSpot);
@@ -2128,7 +2396,9 @@
     drawInstallProgress();
     drawEffects();
 
-    ctx.restore();
+    ctx.restore(); // конец мировой отрисовки (translate камеры)
+
+    ctx.restore(); // конец тряски
 
     // виньетка
     ctx.fillStyle = getVignette();
@@ -2137,7 +2407,7 @@
     // затемнение для школы
     if (game.object.dark) {
       const ny = player.y + player.h / 2;
-      const nx = player.x + player.w / 2;
+      const nx = player.x + player.w / 2 - cam;
       const darkGrad = ctx.createRadialGradient(nx, ny, 60, nx, ny, W * 0.75);
       darkGrad.addColorStop(0, 'rgba(2, 6, 12, 0)');
       darkGrad.addColorStop(1, 'rgba(2, 6, 12, ' + game.object.dark.toFixed(2) + ')');
@@ -2148,7 +2418,7 @@
     // блэкаут-помеха: густая тьма с фонариком
     if (game.debuff && game.debuff.type === 'blackout') {
       const ny = player.y + player.h / 2;
-      const nx = player.x + player.w / 2;
+      const nx = player.x + player.w / 2 - cam;
       const bo = ctx.createRadialGradient(nx, ny, 70, nx, ny, W * 0.7);
       bo.addColorStop(0, 'rgba(1, 3, 8, 0)');
       bo.addColorStop(1, 'rgba(1, 3, 8, 0.8)');
@@ -2226,6 +2496,8 @@
   if (muteBtn) muteBtn.addEventListener('click', () => AudioSys.setMuted(!AudioSys.muted));
 
   ovUnlock.addEventListener('click', (e) => {
+    // мини-игра ППКУ — клики по проводам/клеммам
+    if (game.state === 'link' && lk) { AudioSys.unlock(); if (linkClick(e)) return; }
     const btn = e.target.closest('[data-char]');
     if (btn) { AudioSys.unlock(); chooseChar(btn.getAttribute('data-char')); }
     const go = e.target.closest('[data-goselect]');
@@ -2308,13 +2580,15 @@
   }
 
   if (joyEl) {
-    stageEl.addEventListener('pointerdown', (e) => {
+    // джойстик — строго по самой канве игры, не по всему экрану
+    canvas.addEventListener('pointerdown', (e) => {
       if (!joyTouch || joyState.id !== null) return;
       joyState.id = e.pointerId;
       joyState.ox = e.clientX;
       joyState.oy = e.clientY;
-      joyEl.style.left = e.clientX - stageEl.getBoundingClientRect().left + 'px';
-      joyEl.style.top = e.clientY - stageEl.getBoundingClientRect().top + 'px';
+      const r = canvas.getBoundingClientRect();
+      joyEl.style.left = e.clientX - r.left + 'px';
+      joyEl.style.top = e.clientY - r.top + 'px';
       joyEl.hidden = false;
       joyMove(e.clientX, e.clientY);
     });
@@ -2328,7 +2602,7 @@
     window.addEventListener('pointercancel', () => joyHide());
   }
 
-  stageEl.addEventListener('pointerdown', (e) => {
+  canvas.addEventListener('pointerdown', (e) => {
     if (!joyTouch) return;
     tryFullscreen();
   }, { once: true });
@@ -2358,6 +2632,7 @@
     drone: () => drone, forceDroneDrop: () => { if (!drone) spawnDrone(); if (drone) { drone.state = 'fall'; drone.vy = 30; } },
     inspectForce: inspectNow, forceFlood,
     summonMax, max: () => max, fireWorker,
+    startLinkGame, lk: () => lk, ppku: () => game.ppku, cam: () => cam,
     audio: AudioSys,
   };
 
