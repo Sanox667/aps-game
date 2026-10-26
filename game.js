@@ -87,9 +87,13 @@
   const DEVICES = {
     smoke: { name: 'Дымовой извещатель', points: 10, color: '#e2e8f0', unlock: 1 },
     manual: { name: 'Ручной извещатель', points: 14, color: '#ef4444', unlock: 1 },
+    evac: { name: 'Табло «Выход»', points: 22, color: '#4ade80', unlock: 2 },
+    spk: { name: 'Громкоговоритель СОУЭ', points: 24, color: '#fb7185', unlock: 3 },
     heat: { name: 'Тепловой извещатель', points: 18, color: '#fb923c', unlock: 3 },
     siren: { name: 'Сирена', points: 26, color: '#facc15', unlock: 4 },
+    duct: { name: 'Клапан дымоудаления', points: 34, color: '#a78bfa', unlock: 5 },
     panel: { name: 'Прибор ППК', points: 60, color: '#38bdf8', unlock: 6 },
+    fan: { name: 'Вентилятор подпора', points: 30, color: '#22d3ee', unlock: 7 },
   };
 
   const UNLOCKS = {
@@ -147,6 +151,7 @@
     leninTimer: 12,
     droneTimer: 15, inspectTimer: 30, flood: null,
     maxTimer: 20,
+    gcTimer: 11, maxRTimer: 20,
     ppku: null,
   };
 
@@ -157,6 +162,8 @@
   let lenin = null; // начальник Ленин: гуляет и тянет монтажника на перекур
   let drone = null; // дрон прораба: облетает объект, может упасть — стройка заново
   let max = null; // строгий Макс: выгоняет Ленина и срывает перекуры
+  let gc = null; // генподрядчик-надсмотрщик: ходит, орёт, зовёт Ленина/Макса
+  let maxR = null; // Макс-ревизор: «КРИВО! ПЕРЕДЕЛАЙ!» на случайном этаже
 
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -367,8 +374,8 @@
     }
     const spots = [];
     const type = () => pool[randInt(0, pool.length - 1)];
-    // равномерно по этажам, round-robin, чтобы ёмкость сходилась
-    const need = game.goal;
+    // точек больше, чем надо по плану: выбор маршрута свобода, лишние приборы = путь короче/разнообразнее
+    const need = game.goal + 3 + Math.floor(game.goal * 0.2);
     let row = 0;
     let attempts = 0;
     while (spots.length < need && attempts++ < 2000) {
@@ -446,7 +453,11 @@
     game.flood = null;
     max = null;
     game.maxTimer = 14 + Math.random() * 18;
-    game.failsAtLevel = 0; // счёт срывов сдейла на этом объекте
+    gc = null;
+    game.gcTimer = 10 + Math.random() * 8; // надсмотрщик приезжает рано
+    maxR = null;
+    game.maxRTimer = 16 + Math.random() * 18; // ревизор «КРИВО! ПЕРЕДЕЛАЙ!» приходит позже
+    game.failsAtLevel = 0; // счёт сорванных дедлайнов на этом объекте
     // Лабуба и Леша привозят ППКУ «Сириус» — мини-игра расключения
     game.ppku = Math.random() < 0.32 ? { floor: 0, x: PANEL_X + 280, done: false } : null;
     if (game.ppku) showToast('Лабуба и Леша привезли ППКУ «Сириус» — подойди к шкафу и расключи!');
@@ -953,6 +964,135 @@
     if (M.t <= 0) leaveMax('Макс потерял Ленина из виду и ушёл.');
   }
 
+  // ================= ГЕНПОДРЯДЧИК-НАДСМОТРЩИК =================
+  // Приезжает на каждый объект: ходит по этажу, орёт и зовёт подкрепление —
+  // Ленина или Макса. Стоять рядом опасно для нервов и очков.
+  const GC_LINES = [
+    'КРИВО!', 'МАЛОВАТО БУДЕТ!', 'Я ЗДЕСЬ ГЛАВНЫЙ!',
+    'ЦЕНА СРЫВА — ТВОЯ ПРЕМИЯ!', 'ЭТО ЧТО ЗА ЛИНИЯ?!',
+    'ПОЧЕМУ НЕ СМОНТИРОВАНО?!', 'ШАГАЙ ШУСТРЕЕ!',
+  ];
+
+  function spawnGc() {
+    const n = game.floorYs.length;
+    const fromLeft = Math.random() < 0.5;
+    gc = {
+      floor: randInt(0, n - 1),
+      x: fromLeft ? WALL_L - 60 : WALL_R + 40,
+      targetX: randInt(WALL_L + 90, WALL_R - 120),
+      t: 13 + Math.random() * 8,
+      facing: fromLeft ? 1 : -1,
+      say: null, sayT: 0, shoutT: 2.2, summoned: false,
+    };
+    showToast('Генподрядчик приехал «смотреть за процессом» — орёт и зовёт людей.');
+    AudioSys.alarm();
+  }
+
+  function gcSay(text) {
+    if (!gc) return;
+    gc.say = text;
+    gc.sayT = 2;
+    game.score = Math.max(0, game.score - 2);
+    addFloater(gc.x, game.floorYs[gc.floor] - 74, '−2', '#fca5a5');
+    AudioSys.angry();
+    updateHud();
+  }
+
+  function gcUpdate(dt) {
+    if (!gc) {
+      game.gcTimer -= dt;
+      if (game.gcTimer <= 0) spawnGc();
+      return;
+    }
+    const G = gc;
+    const dir = Math.sign(G.targetX - G.x);
+    if (dir !== 0) { G.x += dir * 55 * dt; G.facing = dir; }
+    G.x = clamp(G.x, WALL_L - 60, WALL_R + 40);
+    if (Math.abs(G.x - G.targetX) < 4) G.targetX = randInt(WALL_L + 90, WALL_R - 120);
+
+    // раз за визит зовёт подкрепление: Ленина, а за ним и Макса
+    if (!G.summoned && G.t < 8) {
+      G.summoned = true;
+      if (Math.random() < 0.55) {
+        if (lenin) {
+          if (!max) summonMax();
+          showToast('Генподрядчик вызвал Макса: «Разберись с Ильичом!»');
+        } else {
+          summonLenin();
+          game.maxTimer = Math.min(game.maxTimer, 2.5); // Макс в пути следом
+          showToast('Генподрядчик вызвал Ленина на объект: «Помоги смонтировать»!');
+        }
+        AudioSys.alarm();
+      }
+    }
+
+    // орёт, если монтажник рядом
+    G.shoutT -= dt;
+    if (G.shoutT <= 0) {
+      G.shoutT = 2.6 + Math.random() * 2.6;
+      if (onFloorPlayer() === G.floor && Math.abs(player.x + player.w / 2 - G.x) < 170) {
+        gcSay(GC_LINES[randInt(0, GC_LINES.length - 1)]);
+      }
+    }
+    if (G.sayT > 0) { G.sayT -= dt; if (G.sayT <= 0) G.say = null; }
+
+    G.t -= dt;
+    if (G.t <= 0) {
+      gc = null;
+      game.gcTimer = 20 + Math.random() * 16;
+      showToast('Генподрядчик ушёл «смотреть за процессом» на другой объект.');
+    }
+  }
+
+  // ================= МАКС-РЕВИЗОР =================
+  // Раз в ~30-55 с приходит с шансом 40% на случайный этаж, тычет в смонтированный
+  // прибор: «КРИВО! МНЕ НЕ НРАВИТСЯ, ПЕРЕДЕЛАТЬ!» — прибор снимается, беги делать.
+  function spawnMaxR() {
+    const done = game.spots.filter((s) => s.done);
+    if (!done.length) return;
+    const spot = done[randInt(0, done.length - 1)];
+    maxR = {
+      floor: spot.floor,
+      x: spot.x + (Math.random() < 0.5 ? -66 : 66),
+      spot,
+      t: 12,
+      facing: 1,
+      say: 'КРИВО!',
+      sayT: 2,
+    };
+    maxR.facing = Math.sign(spot.x - maxR.x) || 1;
+    spot.done = false;
+    spot.san = false;
+    spot.blink = 0;
+    addFloater(spot.x, spot.y - 30, 'ПЕРЕДЕЛАТЬ!', '#fca5a5');
+    showToast('Макс на ' + (spot.floor + 1) + '-м этаже: «КРИВО! МНЕ НЕ НРАВИТСЯ, ПЕРЕДЕЛАТЬ!»');
+    AudioSys.alarm();
+    shake = Math.max(shake, 6);
+  }
+
+  function maxRUpdate(dt) {
+    if (!maxR) {
+      game.maxRTimer -= dt;
+      if (game.maxRTimer <= 0) {
+        game.maxRTimer = 30 + Math.random() * 24;
+        if (Math.random() < 0.4) spawnMaxR();
+      }
+      return;
+    }
+    const R = maxR;
+    R.sayT = Math.max(0, R.sayT - dt);
+    if (R.sayT <= 0) {
+      R.say = Math.random() < 0.5 ? 'КРИВО!' : 'ПЕРЕДЕЛАЙ!';
+      R.sayT = 1.7;
+      AudioSys.angry();
+    }
+    R.t -= dt;
+    if (R.t <= 0) {
+      maxR = null;
+      showToast('Макс-ревизор фыркнул («Ну хоть раз!») и ушёл.');
+    }
+  }
+
   // ================= ППКУ «СИРИУС» (Лабуба и Леша) =================
   // Мини-игра расключения: соединяй провода X1..X6 с клеммами.
   let lk = null; // состояние мини-игры
@@ -1223,6 +1363,112 @@
     ctx.restore();
   }
 
+  function drawSpeech(x, fy, text, color) {
+    const pulse = 0.6 + 0.4 * Math.sin(game.time * 10);
+    ctx.save();
+    const w = Math.max(64, text.length * 7.6);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    rr(x - w / 2, fy - 88, w, 20, 6);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = '700 11px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = pulse;
+    ctx.fillText(text, x, fy - 74);
+    ctx.restore();
+  }
+
+  function drawGc() {
+    if (!gc) return;
+    const G = gc;
+    const fy = game.floorYs[G.floor];
+    const bob = Math.sin(game.time * 7) * 1.2;
+
+    ctx.save();
+    ctx.translate(G.x, fy);
+    ctx.translate(0, bob);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(0, 1, 12, 3.4, 0, 0, Math.PI * 2); ctx.fill();
+    if (G.facing < 0) ctx.scale(-1, 1);
+
+    // ноги — деловые брюки
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-7, -10, 5, 10);
+    ctx.fillRect(2, -10, 5, 10);
+    // сюртук падальского цвета генеральского подрядчика
+    ctx.fillStyle = '#312e46';
+    rr(-10, -33, 20, 24, 4); ctx.fill();
+    ctx.fillStyle = '#f59e0b'; // золотой жетон
+    ctx.fillRect(-3, -30, 6, 4);
+    // папка-план в руке
+    ctx.fillStyle = '#b91c1c';
+    ctx.save();
+    ctx.rotate(-0.25);
+    ctx.fillRect(10, -32, 9, 12);
+    ctx.fillStyle = '#fca5a5';
+    ctx.fillRect(11.5, -30.5, 5, 8);
+    ctx.restore();
+    // руки
+    ctx.fillStyle = '#312e46';
+    ctx.fillRect(-13, -31, 3.5, 15);
+    // голова + белая каска
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(0, -38, 6.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath(); ctx.arc(0, -41, 7.2, Math.PI, 0); ctx.fill();
+    ctx.fillRect(-8.4, -42, 16.8, 3);
+    // брови ярость
+    ctx.fillStyle = '#1c1917';
+    ctx.fillRect(-6, -37.5, 2.6, 1.7);
+    ctx.fillRect(1, -37.5, 2.6, 1.7);
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(-2, -34.6, 4.4, 1.6);
+    ctx.restore();
+
+    if (G.say) drawSpeech(G.x, fy - 4, G.say, '#f87171');
+  }
+
+  function drawMaxR() {
+    if (!maxR) return;
+    const R = maxR;
+    const fy = game.floorYs[R.floor];
+    const bob = Math.sin(game.time * 10) * 1.6;
+
+    ctx.save();
+    ctx.translate(R.x, fy);
+    ctx.translate(0, bob);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(0, 1, 11, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+    if (R.facing < 0) ctx.scale(-1, 1);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-6, -10, 4.5, 10);
+    ctx.fillRect(2, -10, 4.5, 10);
+    ctx.fillStyle = '#1f2937';
+    rr(-9, -30, 18, 21, 3); ctx.fill();
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(-1.5, -28, 3, 10);
+    // тычет пальцем в криво смонтированный прибор
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(9, -30, 3.5, 12);
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(11, -17.5, 2, 0, Math.PI * 2); ctx.fill();
+    // голова
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(0, -35, 6.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1c1917';
+    ctx.fillRect(-6, -41, 12, 3);
+    ctx.fillRect(-3, -38.5, 2.5, 1.6);
+    ctx.fillRect(1, -38.5, 2.5, 1.6);
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(-2.5, -36.4, 4, 1.5);
+    ctx.restore();
+
+    if (R.say) drawSpeech(R.x, fy - 6, R.say, '#fbbf24');
+  }
+
   function tryLayCable() {
     if (game.state !== 'play' || installing.timer > 0 || player.stun > 0) return;
     if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }    const spot = nearestSpot(false);
@@ -1333,6 +1579,15 @@
     spot.brak = false;
     spot.done = true;
     game.installed += 1;
+    // Успел переделать, пока Макс-ревизор ещё стоит и смотрит — премия за сноровку
+    if (maxR && maxR.spot === spot) {
+      maxR = null;
+      game.maxRTimer = 26 + Math.random() * 20;
+      game.score += 25;
+      addFloater(spot.x, spot.y - 40, 'ПЕРЕДЕЛАЛ +25', '#86efac');
+      showToast('Макс удивлён: «Хоть где-то нормально!» +25 за сноровку, и ушёл.');
+      AudioSys.win();
+    }
 
     let base = device.points;
     if (has('multimeter')) base += 10;
@@ -1603,6 +1858,10 @@
     inspectUpdate(dt);
     // строгий Макс — гоняет Ленина
     maxUpdate(dt);
+    // генподрядчик-надсмотрщик: орёт и зовёт подкрепление
+    gcUpdate(dt);
+    // Макс-ревизор: «КРИВО! ПЕРЕДЕЛАЙ!»
+    maxRUpdate(dt);
     if (game.flood) {
       game.flood.t -= dt;
       if (game.flood.t <= 0) game.flood = null;
@@ -2086,6 +2345,52 @@
       ctx.beginPath(); ctx.arc(0, 0, 15, -0.9, 0.9); ctx.stroke();
       ctx.fillStyle = '#78350f';
       ctx.fillRect(-6, -2, 12, 4);
+    } else if (type === 'evac') {
+      // табло «ВЫХОД»: зелёная панель с бегущим человечком
+      ctx.fillStyle = '#14532d';
+      rr(-13, -12, 26, 16, 3); ctx.fill();
+      ctx.strokeStyle = 'rgba(74, 222, 128, ' + blink.toFixed(2) + ')';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-13, -12, 26, 16);
+      ctx.fillStyle = 'rgba(134, 239, 172, ' + (0.5 + 0.5 * blink).toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(-5, -6, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(-6, -4, 2.2, 5);
+      ctx.beginPath(); ctx.moveTo(-3, -1); ctx.lineTo(1, -4); ctx.lineTo(6, -4); ctx.lineTo(9, 0); ctx.lineTo(3, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '700 5px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('ВЫХОД', 0, 2.5);
+    } else if (type === 'spk') {
+      // громкоговоритель СОУЭ
+      ctx.fillStyle = '#fb7185';
+      rr(-9, -10, 12, 18, 4); ctx.fill();
+      ctx.fillStyle = '#881337';
+      ctx.beginPath(); ctx.arc(3, -1, 8, -1.2, 1.2); ctx.fill();
+      ctx.strokeStyle = 'rgba(251, 113, 133, ' + blink.toFixed(2) + ')';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(3, -1, 12, -0.8, 0.8); ctx.stroke();
+    } else if (type === 'duct') {
+      // клапан дымоудаления: квадрат с жалюзи
+      ctx.fillStyle = '#4c1d95';
+      rr(-12, -12, 24, 24, 3); ctx.fill();
+      ctx.fillStyle = '#a78bfa';
+      for (let i = 0; i < 3; i++) ctx.fillRect(-9, -8 + i * 7, 18, 4);
+      ctx.fillStyle = 'rgba(216, 180, 254, ' + blink.toFixed(2) + ')';
+      ctx.fillRect(-2, -2.5, 4, 5);
+    } else if (type === 'fan') {
+      // вентилятор подпора: круг с лопастями
+      ctx.fillStyle = '#0e7490';
+      ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.save();
+      ctx.rotate(game.time * 3);
+      ctx.fillStyle = '#22d3ee';
+      for (let i = 0; i < 4; i++) {
+        ctx.rotate(Math.PI / 2);
+        ctx.beginPath(); ctx.ellipse(4.5, 0, 6, 2.6, 0.5, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+      ctx.fillStyle = '#164e63';
+      ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
     } else {
       ctx.fillStyle = '#38bdf8';
       rr(-11, -13, 22, 26, 4); ctx.fill();
@@ -2390,6 +2695,8 @@
     drawSquad();
     drawLenin();
     drawMax();
+    drawGc();
+    drawMaxR();
     drawPlayer();
     drawBoss();
     drawDrone();
@@ -2579,14 +2886,21 @@
     }
   }
 
+  function joyBlocked(e) {
+    // кнопки и оверлеи — не джойстик
+    const t = e.target;
+    return t && t.closest && t.closest('button, #hud, #overlay');
+  }
+
   if (joyEl) {
-    // джойстик — строго по самой канве игры, не по всему экрану
-    canvas.addEventListener('pointerdown', (e) => {
+    // джойстик работает на ВСЁМ экране: не только по канве, но и по полям вокруг неё
+    window.addEventListener('pointerdown', (e) => {
       if (!joyTouch || joyState.id !== null) return;
+      if (joyBlocked(e)) return;
       joyState.id = e.pointerId;
       joyState.ox = e.clientX;
       joyState.oy = e.clientY;
-      const r = canvas.getBoundingClientRect();
+      const r = stageEl.getBoundingClientRect();
       joyEl.style.left = e.clientX - r.left + 'px';
       joyEl.style.top = e.clientY - r.top + 'px';
       joyEl.hidden = false;
@@ -2602,7 +2916,7 @@
     window.addEventListener('pointercancel', () => joyHide());
   }
 
-  canvas.addEventListener('pointerdown', (e) => {
+  window.addEventListener('pointerdown', () => {
     if (!joyTouch) return;
     tryFullscreen();
   }, { once: true });
@@ -2613,11 +2927,15 @@
   // ================= ЗАПУСК =================
   function fitStage() {
     const rect = stageEl.getBoundingClientRect();
-    const availW = Math.max(120, rect.width - (joyTouch ? 0 : 8));
-    const availH = Math.max(120, rect.height - (joyTouch ? 0 : 0));
-    const scale = Math.min(availW / W, availH / H);
-    canvas.style.width = Math.round(W * scale) + 'px';
-    canvas.style.height = Math.round(H * scale) + 'px';
+    if (joyTouch) {
+      // телефон/фуллскрин: канва во ВЕСЬ экран без полос, лёгкое растяжение под пропорции
+      canvas.style.width = Math.max(80, Math.round(rect.width)) + 'px';
+      canvas.style.height = Math.max(80, Math.round(rect.height)) + 'px';
+    } else {
+      const scale = Math.min(rect.width / W, rect.height / H);
+      canvas.style.width = Math.round(W * scale) + 'px';
+      canvas.style.height = Math.round(H * scale) + 'px';
+    }
   }
   window.addEventListener('resize', fitStage);
   window.addEventListener('orientationchange', () => setTimeout(fitStage, 120));
@@ -2633,6 +2951,8 @@
     inspectForce: inspectNow, forceFlood,
     summonMax, max: () => max, fireWorker,
     startLinkGame, lk: () => lk, ppku: () => game.ppku, cam: () => cam,
+    gc: () => gc, forceGc: spawnGc, forceGcSay: gcSay,
+    maxR: () => maxR, forceMaxR: spawnMaxR,
     audio: AudioSys,
   };
 
@@ -2641,13 +2961,29 @@
   openSelect();
 
   let last = performance.now();
+  let rafAlive = false; // отозвался ли requestAnimationFrame
+  function step(dtms) {
+    const dt = Math.min(0.05, Math.max(0, dtms / 1000));
+    last = performance.now();
+    // сбой кадра не должен гасить всю игру: пишем и рендерим дальше
+    try {
+      update(dt);
+      draw();
+      updateHud();
+    } catch (e) {
+      if (window.__aps) window.__aps.err = String(e && e.stack || e);
+      console.error('APS frame:', e);
+    }
+  }
   function frame(now) {
-    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
-    last = now;
-    update(dt);
-    draw();
-    updateHud();
+    rafAlive = true;
+    step(now - last);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+  // подстраховка: если rAF молчит (фоновая вкладка/троттлинг WebView) — рендерим по таймеру
+  setInterval(() => {
+    if (rafAlive) return;
+    step(performance.now() - last);
+  }, 50);
 })();

@@ -457,6 +457,32 @@ canvas {
     align-items: center;
   }
 
+  /* канва тянется ровно во весь экран телефона (лёгкое растяжение вместо полос) */
+  #stage canvas {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* подсказка «поверни телефон» в портрете */
+  #rotate {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(5, 10, 24, 0.88);
+    color: #bfdbfe;
+    font: 600 17px "Segoe UI", system-ui, sans-serif;
+    text-align: center;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+  }
+
+  @media (orientation: portrait) {
+    #rotate { display: flex; }
+  }
+
   /* кнопки СТАВИТЬ / КАБЕЛЬ — поверх сцены в правом нижнем углу */
   #controls {
     position: absolute;
