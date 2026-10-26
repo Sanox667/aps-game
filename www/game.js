@@ -143,12 +143,14 @@
     debuff: null, eventTimer: 18,
     buffState: {}, buffTimer: 24, buffs: [],
     squad: [], bossPass: false,
+    leninTimer: 12,
   };
 
   let installing = { timer: 0, total: 0, spot: null, kind: null };
   let toastId = 0;
   let shake = 0;
   let boss = null;
+  let lenin = null; // начальник Ленин: гуляет и тянет монтажника на перекур
 
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -423,6 +425,8 @@
     game.buffs = [];
     game.squad = [];
     game.bossPass = false;
+    lenin = null;
+    game.leninTimer = 11 + Math.random() * 14;
 
     if (game.char.squad && Math.random() < 0.3) {
       const n = Math.min(5, game.floorYs.length);
@@ -544,7 +548,19 @@
   function movePlayer(dt) {
     const p = player;
     if (p.stun > 0) { p.stun -= dt; return; }
-    const dx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0);
+    let dx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0);
+
+    // Ленин зовёт на перекур: монтажник бежит сам, игрок временно без руля
+    const forced = leninForce();
+    if (forced) {
+      const L = lenin;
+      if (L.state === 'smoke') dx = 0;
+      else {
+        dx = Math.sign(L.x - (p.x + p.w / 2));
+        if (dx === 0) dx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0);
+      }
+      if (p.climbing) { p.climbing = null; p.vy = 0; }
+    }
 
     if (p.climbing) {
       const ladder = p.climbing;
@@ -577,6 +593,7 @@
     }
 
     for (const ladder of game.ladders) {
+      if (leninForce()) break; // на перекуре руками по лестницам не лазаем
       if (Math.abs(p.x + p.w / 2 - ladder.x) > 16) continue;
       const bottom = p.y + p.h;
       if (keys.has('up') && Math.abs(bottom - ladder.bottom) < 3) { grab(ladder); return; }
@@ -592,10 +609,10 @@
       player.x = ladder.x - player.w / 2;
       player.y = ladder.bottom - player.h;
       player.vy = 0;
-      player.stun = 1.2;
+      player.stun = 0.5;
       game.combo = 0;
       game.comboTimer = 0;
-      shake = 10;
+      shake = 6;
       AudioSys.caught();
       addFloater(ladder.x, ladder.bottom - 60, 'СВАЛИЛСЯ!', '#f87171');
       showToast('Свалился с лестницы! Комбо сгорело.');
@@ -627,8 +644,93 @@
     return best;
   }
 
+  // ================= НАЧАЛЬНИК ЛЕНИН =================
+  // Гуляет по этажам объекта. Как только подходит близко — созывает монтажника на
+  // перекур: игрок принудительно бежит к нему и «курит» пару секунд. Отвлечение!
+  function summonLenin() {
+    if (lenin) return;
+    const pf = onFloorPlayer();
+    const floor = pf >= 0 ? pf : randInt(0, game.floorYs.length - 1);
+    const playerOnSide = player.x + player.w / 2 > W / 2;
+    lenin = {
+      floor, x: playerOnSide ? WALL_L + 70 : WALL_R - 90, w: 26, h: 42,
+      state: 'walk', t: 15 + Math.random() * 8, smokeT: 0, facing: 1, cool: 3,
+      targetX: randInt(WALL_L + 140, WALL_R - 140),
+    };
+    showToast('Ленин пришёл на объект — гуляет и следит!');
+    AudioSys.tone(220, 0.16, 'triangle', 0.08);
+  }
+
+  function leaveLenin(msg) {
+    lenin = null;
+    game.leninTimer = 26 + Math.random() * 24;
+    if (msg) showToast(msg);
+  }
+
+  function leninForce() {
+    return lenin && (lenin.state === 'call' || lenin.state === 'smoke') && onFloorPlayer() === lenin.floor;
+  }
+
+  function leninUpdate(dt) {
+    if (!lenin) {
+      game.leninTimer -= dt;
+      if (game.leninTimer <= 0) summonLenin();
+      return;
+    }
+    const L = lenin;
+    const fy = game.floorYs[L.floor];
+
+    if (L.state === 'walk') {
+      if (L.cool > 0) L.cool -= dt;
+      const dir = Math.sign(L.targetX - L.x);
+      if (dir !== 0) { L.x += dir * 46 * dt; L.facing = dir; }
+      if (dir === 0 || Math.abs(L.targetX - L.x) < 8) L.targetX = randInt(WALL_L + 120, WALL_R - 120);
+      L.t -= dt;
+      if (L.t <= 0) { leaveLenin('Ленин погулял и ушёл по своим делам.'); return; }
+      const pcx = player.x + player.w / 2;
+      if (L.cool <= 0 && !player.stun && onFloorPlayer() === L.floor && Math.abs(pcx - L.x) < 300) {
+        L.state = 'call';
+        L.t = 0;
+        addFloater(L.x, fy - 64, 'ПЕРЕКУР!', '#fbbf24');
+        AudioSys.tone(170, 0.2, 'sawtooth', 0.08);
+      }
+      return;
+    }
+
+    if (L.state === 'call') {
+      L.t += dt;
+      if (onFloorPlayer() !== L.floor) {
+        if (L.t > 9) { leaveLenin('Ленин ушёл не попыхав — вы отстояли работу.'); }
+        return;
+      }
+      const pcx = player.x + player.w / 2;
+      if (Math.abs(pcx - L.x) < 20) {
+        L.state = 'smoke';
+        L.smokeT = 2.8;
+        addFloater(L.x, fy - 64, 'курим…', '#fef08a');
+      }
+      return;
+    }
+
+    if (L.state === 'smoke') {
+      L.smokeT -= dt;
+      if (L.smokeT <= 0) {
+        addFloater(L.x, fy - 64, 'Всё, работаем!', '#86efac');
+        L.state = 'walk';
+        L.t = 17 + Math.random() * 9;
+        L.cool = 9;
+        // уходит в противоположную от монтажника сторону
+        const pcx = player.x + player.w / 2;
+        L.targetX = pcx > W / 2
+          ? randInt(WALL_L + 100, W / 2 - 90)
+          : randInt(W / 2 + 90, WALL_R - 130);
+      }
+    }
+  }
+
   function tryLayCable() {
     if (game.state !== 'play' || installing.timer > 0 || player.stun > 0) return;
+    if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }
     const spot = nearestSpot(false);
     if (!spot) {
       const any = nearestSpot(true);
@@ -645,6 +747,7 @@
 
   function tryInstall() {
     if (game.state !== 'play' || installing.timer > 0 || player.stun > 0) return;
+    if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }
     if (game.acceptance) { tryAccept(); return; }
     const spot = nearestSpot(true);
     if (!spot) {
@@ -937,7 +1040,8 @@
       updateHud();
     }
 
-    if (game.combo > 0 && !has('radio') && !game.buffState.guard && installing.timer <= 0) {
+    if (game.combo > 0 && !has('radio') && !game.buffState.guard && installing.timer <= 0 &&
+        !(lenin && lenin.state === 'smoke')) {
       game.comboTimer -= dt;
       if (game.comboTimer <= 0) { game.combo = 0; game.comboTimer = 0; }
     }
@@ -958,6 +1062,9 @@
       game.debuff.t -= dt;
       if (game.debuff.t <= 0) game.debuff = null;
     }
+
+    // начальник Ленин — ходит и отвлекает
+    leninUpdate(dt);
 
     // улучшения
     game.buffTimer -= dt;
@@ -1496,6 +1603,77 @@
     }
   }
 
+  function drawLenin() {
+    if (!lenin) return;
+    const L = lenin;
+    const fy = game.floorYs[L.floor];
+    const walking = L.state === 'walk';
+    const bob = walking ? Math.sin(game.time * 7 + L.floor) * 1.4 : 0;
+
+    ctx.save();
+    ctx.translate(L.x, fy);
+    ctx.translate(0, bob);
+    // тень
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(0, 1, 12, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+    if (L.facing < 0) ctx.scale(-1, 1);
+
+    // ноги и костюм
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(-6, -10, 4.5, 10);
+    ctx.fillRect(2, -10, 4.5, 10);
+    ctx.fillStyle = '#334155';
+    rr(-9, -30, 18, 21, 3); ctx.fill();
+    // галстук
+    ctx.fillStyle = '#b91c1c';
+    ctx.fillRect(-1.5, -28, 3, 9);
+    // руки
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(-12, -28, 3.5, 14);
+    ctx.fillRect(8.5, -28, 3.5, 14);
+    // сигарета в перекуре
+    if (L.state === 'smoke') {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(10, -22, 5, 2);
+      ctx.fillStyle = '#f97316';
+      ctx.fillRect(15, -22, 2, 2);
+      // дым
+      for (let i = 0; i < 3; i++) {
+        const t = (game.time * 1.6 + i * 0.7) % 2.2;
+        ctx.fillStyle = 'rgba(226, 232, 240, ' + (0.32 * (1 - t / 2.2)).toFixed(2) + ')';
+        ctx.beginPath(); ctx.arc(16, -25 - t * 9, 2.5 + t * 2, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // голова: лысина, борода-козлик
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(0, -35, 6.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2f2a26';
+    ctx.beginPath(); ctx.moveTo(2, -31); ctx.quadraticCurveTo(0, -27, -2, -31); ctx.lineTo(-2, -33); ctx.lineTo(2, -33); ctx.closePath(); ctx.fill();
+    // кепка
+    ctx.fillStyle = '#3f4653';
+    ctx.beginPath(); ctx.arc(0, -37, 7, Math.PI, 0); ctx.fill();
+    ctx.fillRect(-7.5, -37.5, 14.5, 2.4);
+    ctx.fillRect(4, -37.5, 6, 2); // козырёк
+    ctx.restore();
+
+    // пузырь «ПЕРЕКУР!» при зове
+    if (L.state === 'call') {
+      const pulse = 0.6 + 0.4 * Math.sin(game.time * 9);
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2;
+      const bw = 78;
+      rr(L.x - bw / 2, fy - 88, bw, 22, 7); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '700 14px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = pulse;
+      ctx.fillText('ПЕРЕКУР!', L.x, fy - 72);
+      ctx.restore();
+    }
+  }
+
   function drawBoss() {
     if (!boss) return;
     const b = boss;
@@ -1599,6 +1777,7 @@
     drawLayingCable();
     drawBuffs();
     drawSquad();
+    drawLenin();
     drawPlayer();
     drawBoss();
     drawInstallProgress();
@@ -1731,16 +1910,90 @@
     button.addEventListener('contextmenu', (e) => e.preventDefault());
   });
 
+  // ================= ДЖОЙСТИК + ВЕСЬ ЭКРАН =================
+  const joyEl = document.getElementById('joy');
+  const joyKnob = document.getElementById('joy-knob');
+  const joyState = { id: null, ox: 0, oy: 0 };
+  const joyTouch = new URLSearchParams(location.search).has('touch') ||
+    window.matchMedia('(pointer: coarse)').matches;
+
+  function joyClearKeys() {
+    keys.delete('left'); keys.delete('right'); keys.delete('up'); keys.delete('down');
+  }
+
+  function joyApply(dx, dy) {
+    joyClearKeys();
+    const T = 0.36;
+    if (dx > T) keys.add('right'); else if (dx < -T) keys.add('left');
+    if (dy > T) keys.add('down'); else if (dy < -T) keys.add('up');
+  }
+
+  function joyMove(px, py) {
+    let dx = (px - joyState.ox) / 46;
+    let dy = (py - joyState.oy) / 46;
+    const len = Math.hypot(dx, dy);
+    if (len > 1) { dx /= len; dy /= len; }
+    joyApply(dx, dy);
+    if (joyKnob) joyKnob.style.transform = 'translate(' + Math.round(dx * 38) + 'px,' + Math.round(dy * 38) + 'px)';
+  }
+
+  function joyHide() {
+    joyState.id = null;
+    joyClearKeys();
+    if (joyEl) joyEl.hidden = true;
+    if (joyKnob) joyKnob.style.transform = 'translate(0,0)';
+  }
+
+  function tryFullscreen() {
+    const de = document.documentElement;
+    if (!document.fullscreenElement) {
+      if (de.requestFullscreen) de.requestFullscreen().catch(() => {});
+    }
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
+  }
+
+  if (joyEl) {
+    stageEl.addEventListener('pointerdown', (e) => {
+      if (!joyTouch || joyState.id !== null) return;
+      joyState.id = e.pointerId;
+      joyState.ox = e.clientX;
+      joyState.oy = e.clientY;
+      joyEl.style.left = e.clientX - stageEl.getBoundingClientRect().left + 'px';
+      joyEl.style.top = e.clientY - stageEl.getBoundingClientRect().top + 'px';
+      joyEl.hidden = false;
+      joyMove(e.clientX, e.clientY);
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== joyState.id) return;
+      joyMove(e.clientX, e.clientY);
+    });
+    window.addEventListener('pointerup', (e) => {
+      if (e.pointerId === joyState.id) joyHide();
+    });
+    window.addEventListener('pointercancel', () => joyHide());
+  }
+
+  stageEl.addEventListener('pointerdown', (e) => {
+    if (!joyTouch) return;
+    tryFullscreen();
+  }, { once: true });
+
+  const fullBtn = document.getElementById('btn-full');
+  if (fullBtn) fullBtn.addEventListener('click', () => { AudioSys.unlock(); tryFullscreen(); });
+
   // ================= ЗАПУСК =================
   function fitStage() {
-    const coarse = window.matchMedia('(pointer: coarse)').matches;
-    const maxW = Math.min(window.innerWidth - 24, 1000);
-    const maxH = Math.max(150, window.innerHeight - (coarse ? 250 : 200));
-    const scale = Math.min(maxW / W, maxH / H, 1);
+    const rect = stageEl.getBoundingClientRect();
+    const availW = Math.max(120, rect.width - (joyTouch ? 0 : 8));
+    const availH = Math.max(120, rect.height - (joyTouch ? 0 : 0));
+    const scale = Math.min(availW / W, availH / H);
     canvas.style.width = Math.round(W * scale) + 'px';
     canvas.style.height = Math.round(H * scale) + 'px';
   }
   window.addEventListener('resize', fitStage);
+  window.addEventListener('orientationchange', () => setTimeout(fitStage, 120));
   fitStage();
 
   window.__aps = {
@@ -1748,6 +2001,7 @@
     spots: () => game.spots, floors: () => game.floorYs,
     chars: () => CHARACTERS, chooseChar, openSelect,
     startLevel, tryInstall, tryLayCable, tryAccept, nextLevel, resetGame,
+    summonLenin, lenin: () => lenin, fitStage, tryFullscreen,
     audio: AudioSys,
   };
 

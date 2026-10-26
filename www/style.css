@@ -83,7 +83,8 @@ html, body {
   50% { box-shadow: 0 0 14px 2px rgba(248, 113, 113, 0.35); }
 }
 
-#btn-sound {
+#btn-sound,
+#btn-full {
   width: 42px;
   height: 42px;
   align-self: center;
@@ -95,7 +96,8 @@ html, body {
   cursor: pointer;
 }
 
-#btn-sound:active { background: #1f2d4d; }
+#btn-sound:active,
+#btn-full:active { background: #1f2d4d; }
 
 #btn-char {
   width: 42px;
@@ -294,31 +296,10 @@ canvas {
 #controls {
   display: none;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 10px;
   margin-top: 14px;
   user-select: none;
-}
-
-#controls .dpad {
-  display: flex;
-  gap: 10px;
-}
-
-#controls .vertical {
-  flex-direction: column;
-}
-
-#controls button {
-  width: 62px;
-  height: 56px;
-  font-size: 20px;
-  color: var(--text);
-  background: #16203a;
-  border: 1px solid #2b3d63;
-  border-radius: 14px;
-  touch-action: none;
 }
 
 #controls .actions {
@@ -329,6 +310,35 @@ canvas {
 
 #controls button:active {
   background: #1f2d4d;
+}
+
+/* джойстик (touch) */
+#joy {
+  position: absolute;
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.38);
+  border: 2px solid rgba(148, 163, 184, 0.5);
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  touch-action: none;
+  z-index: 5;
+  pointer-events: none;
+}
+
+#joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin: -27px 0 0 -27px;
+  border-radius: 50%;
+  background: rgba(253, 224, 71, 0.9);
+  border: 2px solid #0b1224;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
 
 #btn-action {
@@ -356,6 +366,61 @@ canvas {
 @media (pointer: coarse), (max-width: 820px) {
   #controls { display: flex; }
   #hint { display: none; }
-  .stat { flex: 1 1 30%; padding: 6px 10px; }
-  .stat .value { font-size: 17px; }
+}
+
+/* ---- телефон/планшет: игра на весь экран, альбомная ориентация ---- */
+@media (pointer: coarse) {
+  html, body {
+    overflow: hidden;
+    height: 100%;
+  }
+
+  #app {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    max-width: none;
+    padding: 4px 6px 6px;
+  }
+
+  #hud {
+    flex-wrap: nowrap;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+
+  .stat {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 3px 7px;
+    border-radius: 8px;
+  }
+
+  .stat .label { font-size: 8.5px; }
+  .stat .value { font-size: 14px; }
+
+  #stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* кнопки СТАВИТЬ / КАБЕЛЬ — поверх сцены в правом нижнем углу */
+  #controls {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    z-index: 20;
+    margin: 0;
+  }
+
+  #controls button {
+    min-width: 0;
+    padding: 10px 14px;
+    border-radius: 12px;
+    opacity: 0.92;
+  }
 }

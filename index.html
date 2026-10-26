@@ -17,12 +17,14 @@
       <div class="stat"><span class="label">Комбо</span><span class="value" id="hud-combo">—</span></div>
       <div class="stat"><span class="label">Рекорд</span><span class="value" id="hud-best">0</span></div>
       <button id="btn-sound" type="button" aria-label="Звук">🔊</button>
+      <button id="btn-full" type="button" aria-label="Во весь экран">⛶</button>
       <button id="btn-char" type="button" aria-label="Сменить монтажника">👷</button>
     </header>
 
     <div id="stage">
       <canvas id="game" width="960" height="620"></canvas>
       <div id="toast" class="toast hidden"></div>
+      <div id="joy" hidden><div id="joy-knob"></div></div>
     </div>
 
     <div id="overlay" class="overlay hidden">
@@ -35,21 +37,13 @@
     </div>
 
     <div id="controls">
-      <div class="dpad">
-        <button data-k="left" aria-label="Влево">◀</button>
-        <button data-k="right" aria-label="Вправо">▶</button>
-      </div>
-      <div class="dpad vertical">
-        <button data-k="up" aria-label="Вверх">▲</button>
-        <button data-k="down" aria-label="Вниз">▼</button>
-      </div>
       <div class="actions">
         <button id="btn-cable" data-k="cable">〰️ Кабель</button>
         <button id="btn-action" data-k="action">🔧 Ставить</button>
       </div>
     </div>
 
-    <footer id="hint">← → ходить · ↑ ↓ лестницы · C — кабель · Пробел — ставить · M — звук · R — заново · 👤 — сменить монтажника</footer>
+    <footer id="hint">← → ходить · ↑ ↓ лестницы · C — кабель · Пробел — ставить · M — звук · R — заново · ⛶ — весь экран · 👤 — сменить монтажника</footer>
   </div>
 
   <script src="game.js"></script>
