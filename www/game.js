@@ -437,6 +437,7 @@
     game.flood = null;
     max = null;
     game.maxTimer = 14 + Math.random() * 18;
+    game.failsAtLevel = 0; // счёт срывов сдейла на этом объекте
 
     if (game.char.squad && Math.random() < 0.3) {
       const n = Math.min(5, game.floorYs.length);
@@ -1300,8 +1301,18 @@
       game.shiftTime = game.shiftLimit * 0.35;
       AudioSys.alarm();
       shake = 14;
-      showToast('Смена сорвана! Генподрядчик в ярости: −' + lost);
-      updateHud();
+      game.failsAtLevel = (game.failsAtLevel || 0) + 1;
+
+      // Макс строгий: два провала — предупреждение, третий (или злой рандом на 2-м) — увольнение
+      if (game.failsAtLevel >= 3 || (game.failsAtLevel === 2 && Math.random() < 0.6)) {
+        fireWorker();
+      } else if (game.failsAtLevel === 2) {
+        showToast('Макс вне себя: ещё один сорванный срок — и расчёт!');
+        updateHud();
+      } else {
+        showToast('Смена сорвана! Генподрядчик в ярости: −' + lost + '. Макс ставит на вид.');
+        updateHud();
+      }
     }
 
     if (game.combo > 0 && !has('radio') && !game.buffState.guard && installing.timer <= 0 &&
@@ -1447,6 +1458,28 @@
     startLevel(game.level + 1);
   }
   function hideOverlay() { overlay.classList.add('hidden'); }
+
+  // ================= УВОЛЬНЕНИЕ МАКСОМ =================
+  // Объект каждый раз не сдан в срок — Макс пришёл с расчётным листом.
+  function fireWorker() {
+    game.state = 'fired';
+    AudioSys.installStop();
+    AudioSys.alarm();
+    const who = game.char ? game.char.name : 'Начальник';
+    if (game.score > game.best) { game.best = game.score; saveBest(); }
+    ovTitle.textContent = 'МАКС ВАС УВОЛИЛ!';
+    ovText.textContent = who + ' трижды сорвал смену на «' + game.object.name + '». ' +
+      'Очки: ' + game.score + ' · рекорд: ' + game.best + '. ' +
+      'Расчёт! Трудовая книжка — в дверь.';
+    ovBtn.hidden = false;
+    ovBtn.textContent = 'Заново этим же монтажником';
+    ovUnlock.innerHTML =
+      '<button class="charcard" data-goselect="1">' +
+      '<span class="ce">👷</span><span class="cn">Позвать другого монтажника</span>' +
+      '<span class="cs">выбери кого-то другого — смена начнётся с нуля</span></button>';
+    overlay.classList.remove('hidden');
+    showToast('Макс сказал: расчёт!');
+  }
 
   function showToast(text) {
     toastEl.textContent = text;
@@ -2175,7 +2208,10 @@
       if (game.state !== 'select') resetGame();
       return;
     }
-    if (action === 'enter') { nextLevel(); return; }
+    if (action === 'enter') {
+      if (game.state === 'fired') { resetGame(); return; }
+      if (game.state === 'levelup') { nextLevel(); return; }
+    }
     if (action === 'mute') { AudioSys.setMuted(!AudioSys.muted); return; }
     if (action === 'action') { tryInstall(); return; }
     if (action === 'cable') { tryLayCable(); return; }
@@ -2192,12 +2228,17 @@
   ovUnlock.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-char]');
     if (btn) { AudioSys.unlock(); chooseChar(btn.getAttribute('data-char')); }
+    const go = e.target.closest('[data-goselect]');
+    if (go) { AudioSys.unlock(); openSelect(); }
   });
 
   const charBtn = document.getElementById('btn-char');
   if (charBtn) charBtn.addEventListener('click', () => { AudioSys.unlock(); openSelect(); });
 
-  ovBtn.addEventListener('click', nextLevel);
+  ovBtn.addEventListener('click', () => {
+    if (game.state === 'fired') resetGame();
+    else nextLevel();
+  });
 
   document.addEventListener('pointerdown', () => AudioSys.unlock(), { once: true });
 
@@ -2316,7 +2357,7 @@
     summonLenin, lenin: () => lenin, fitStage, tryFullscreen,
     drone: () => drone, forceDroneDrop: () => { if (!drone) spawnDrone(); if (drone) { drone.state = 'fall'; drone.vy = 30; } },
     inspectForce: inspectNow, forceFlood,
-    summonMax, max: () => max,
+    summonMax, max: () => max, fireWorker,
     audio: AudioSys,
   };
 
