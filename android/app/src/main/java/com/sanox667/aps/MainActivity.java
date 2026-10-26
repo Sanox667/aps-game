@@ -28,7 +28,7 @@ public class MainActivity extends BridgeActivity {
       WindowInsetsController c = w.getInsetsController();
       if (c != null) {
         c.hide(WindowInsets.Type.systemBars());
-        c.setSystemBehaviors(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
       }
       w.setDecorFitsSystemWindows(false);
     } else {
