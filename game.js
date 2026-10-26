@@ -426,7 +426,7 @@
     game.squad = [];
     game.bossPass = false;
     lenin = null;
-    game.leninTimer = 11 + Math.random() * 14;
+    game.leninTimer = 6 + Math.random() * 6; // Ленин приходит рано — не даёт расслабиться
 
     if (game.char.squad && Math.random() < 0.3) {
       const n = Math.min(5, game.floorYs.length);
@@ -663,7 +663,7 @@
 
   function leaveLenin(msg) {
     lenin = null;
-    game.leninTimer = 26 + Math.random() * 24;
+    game.leninTimer = 18 + Math.random() * 14;
     if (msg) showToast(msg);
   }
 
