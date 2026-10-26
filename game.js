@@ -38,9 +38,10 @@
   const PANEL_X = WALL_L + 46; // щит АПС на первом этаже
 
   // ---------- объекты (уровни-сцены) ----------
+  // pace: множитель времени (больше = легче). dark: затемнение. crates: ящики. boss: сцена босса.
   const OBJECTS = [
     {
-      name: 'БЦ «Заря»', floors: 4, extra: ['smoke'] , pace: 1,
+      name: 'БЦ «Заря»', floors: 4, extra: ['smoke'], pace: 1,
       pal: { sky1: '#0a1224', sky2: '#0e1a33', wall: '#131d33', beam: '56, 189, 248', wire: '#38bdf8', light: '#fcd34d' },
     },
     {
@@ -58,6 +59,26 @@
     {
       name: 'Стадион «Факел»', floors: 4, extra: ['siren'], pace: 1.15, boss: true,
       pal: { sky1: '#240a0a', sky2: '#331212', wall: '#331a1a', beam: '248, 113, 113', wire: '#f87171', light: '#fca5a5' },
+    },
+    {
+      name: 'Больница «Надежда»', floors: 5, extra: ['smoke', 'manual', 'heat'], pace: 0.95, dark: 0.18,
+      pal: { sky1: '#0a1a18', sky2: '#0c241e', wall: '#16322a', beam: '110, 231, 183', wire: '#6ee7b7', light: '#a7f3d0' },
+    },
+    {
+      name: 'Офис «Синева»', floors: 4, extra: ['siren'], pace: 0.92,
+      pal: { sky1: '#081226', sky2: '#0c1830', wall: '#14203c', beam: '96, 165, 250', wire: '#60a5fa', light: '#93c5fd' },
+    },
+    {
+      name: 'Завод «Прогресс»', floors: 5, extra: ['heat', 'siren'], pace: 1, crates: true, dark: 0.12,
+      pal: { sky1: '#160d07', sky2: '#20130a', wall: '#2c1c0d', beam: '214, 155, 58', wire: '#d97706', light: '#fcd34d' },
+    },
+    {
+      name: 'Аэропорт «Крыло»', floors: 3, extra: ['siren', 'panel'], pace: 1,
+      pal: { sky1: '#060d1d', sky2: '#0a1428', wall: '#131f3a', beam: '125, 211, 252', wire: '#38bdf8', light: '#bae6fd' },
+    },
+    {
+      name: 'Энергоблок «Аврора»', floors: 5, extra: ['siren', 'panel'], pace: 1.05, boss: true,
+      pal: { sky1: '#1a0b26', sky2: '#26103a', wall: '#2c1440', beam: '232, 121, 249', wire: '#e879f9', light: '#f5d0fe' },
     },
   ];
 
@@ -328,6 +349,8 @@
   function startLevel(n) {
     game.level = n;
     game.object = OBJECTS[(n - 1) % OBJECTS.length];
+    // «круг» сложности: 2-й круг тех же объектов — таймеры короче, босс злее
+    game.cycle = Math.floor((n - 1) / OBJECTS.length);
     game.floorYs = floorYsFor(game.object.floors);
     game.ladders = buildLadders(game.object.floors);
 
@@ -343,7 +366,8 @@
     game.comboTimer = 0;
     game.timeouts = 0;
     game.acceptance = false;
-    game.shiftLimit = Math.round((38 + game.goal * 9) * game.object.pace * (game.object.boss ? 1.2 : 1));
+    const diff = Math.max(0.6, 1 - 0.07 * game.cycle);
+    game.shiftLimit = Math.round((38 + game.goal * 9) * game.object.pace * (game.object.boss ? 1.2 : 1) * diff);
     game.shiftTime = game.shiftLimit;
     game.cables = [];
     game.floaters.length = 0;
@@ -368,6 +392,9 @@
     }
 
     AudioSys.siren();
+    if (game.cycle > 0 && (n - 1) % OBJECTS.length === 0) {
+      showToast('Круг ' + (game.cycle + 1) + ': таймеры короче, босс злее. Держи темп!');
+    }
     hideOverlay();
     updateHud();
   }
@@ -398,9 +425,13 @@
   }
 
   function makeBoss() {
+    const cycle = game.cycle || 0;
     return {
       x: WALL_R - 120, floor: 0, y: game.floorYs[0] - 40,
-      w: 26, h: 40, speed: 96, dir: -1, mode: 'patrol', wait: 0, angry: 0, cooldown: 0,
+      w: 26, h: 40,
+      speed: Math.min(150, 92 + game.level * 1.6 + cycle * 10),
+      reach: 28 + cycle * 2,
+      dir: -1, mode: 'patrol', wait: 0, angry: 0, cooldown: 0,
     };
   }
 
@@ -596,7 +627,7 @@
     // ловит монтажника
     if (b.cooldown <= 0 && player.stun <= 0) {
       const pf = onFloorPlayer();
-      if (pf === b.floor && Math.abs(b.x - (player.x + player.w / 2)) < 30) catchPlayer();
+      if (pf === b.floor && Math.abs(b.x - (player.x + player.w / 2)) < (b.reach || 30)) catchPlayer();
     }
   }
 
@@ -642,7 +673,7 @@
     const b = boss;
     b.cooldown = 2.2;
     player.stun = 1.0;
-    const lost = Math.min(game.score, 15);
+    const lost = Math.min(game.score, 15 + 5 * (game.cycle || 0));
     game.score -= lost;
     game.combo = 0;
     game.comboTimer = 0;
