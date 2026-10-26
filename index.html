@@ -3,31 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#070b16">
   <title>Монтажник АПС</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
     <header id="hud">
-      <div class="stat"><span class="label">Смена</span><span class="value" id="hud-level">1</span></div>
+      <div class="stat"><span class="label">Объект</span><span class="value" id="hud-level">1</span></div>
       <div class="stat"><span class="label">Очки</span><span class="value" id="hud-score">0</span></div>
       <div class="stat"><span class="label">Задание</span><span class="value" id="hud-goal">0 / 5</span></div>
+      <div class="stat danger-card" id="stat-time"><span class="label">Время</span><span class="value" id="hud-time">—</span></div>
       <div class="stat"><span class="label">Комбо</span><span class="value" id="hud-combo">—</span></div>
       <div class="stat"><span class="label">Рекорд</span><span class="value" id="hud-best">0</span></div>
+      <button id="btn-sound" type="button" aria-label="Звук">🔊</button>
     </header>
-
-    <div id="tools" class="tools"></div>
 
     <div id="stage">
       <canvas id="game" width="960" height="620"></canvas>
       <div id="toast" class="toast hidden"></div>
-      <div id="overlay" class="overlay hidden">
-        <div class="panel">
-          <h2 id="ov-title">Смена закрыта</h2>
-          <p id="ov-text"></p>
-          <div id="ov-unlock"></div>
-          <button id="ov-btn" type="button">Следующая смена</button>
-        </div>
+    </div>
+
+    <div id="overlay" class="overlay hidden">
+      <div class="panel">
+        <h2 id="ov-title">Объект сдан</h2>
+        <p id="ov-text"></p>
+        <div id="ov-unlock"></div>
+        <button id="ov-btn" type="button">Следующий объект</button>
       </div>
     </div>
 
@@ -40,10 +42,13 @@
         <button data-k="up" aria-label="Вверх">▲</button>
         <button data-k="down" aria-label="Вниз">▼</button>
       </div>
-      <button id="btn-action" data-k="action">🔧 Ставить</button>
+      <div class="actions">
+        <button id="btn-cable" data-k="cable">〰️ Кабель</button>
+        <button id="btn-action" data-k="action">🔧 Ставить</button>
+      </div>
     </div>
 
-    <footer id="hint">← → ходить · ↑ ↓ лестницы · Пробел — установить · R — заново</footer>
+    <footer id="hint">← → ходить · ↑ ↓ лестницы · C — проложить кабель · Пробел — установить · M — звук · R — заново</footer>
   </div>
 
   <script src="game.js"></script>
