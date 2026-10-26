@@ -97,6 +97,47 @@ html, body {
 
 #btn-sound:active { background: #1f2d4d; }
 
+#btn-char {
+  width: 42px;
+  height: 42px;
+  align-self: center;
+  font-size: 17px;
+  color: #fde68a;
+  background: #16203a;
+  border: 1px solid #4a3d1f;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+#btn-char:active { background: #2a2413; }
+
+.charcard {
+  display: block;
+  width: 100%;
+  text-align: left;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: #131d33;
+  border: 1px solid #2b3d63;
+  border-radius: 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.charcard.active {
+  border-color: #fde047;
+  background: rgba(253, 224, 71, 0.08);
+}
+
+.charcard .ce { font-size: 22px; margin-right: 8px; }
+.charcard .cn { display: block; font-weight: 700; font-size: 15px; color: #fde047; }
+.charcard .cd { display: block; margin: 2px 0; color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+.charcard .cs { display: block; color: #64748b; font-size: 11px; }
+
+.charcard:active { background: #1f2d4d; }
+
 canvas {
   display: block;
   width: 100%;

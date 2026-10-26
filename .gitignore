@@ -9,6 +9,7 @@ Desktop.ini
 # Логи и временные файлы
 *.log
 *.tmp
+*.apk
 
 # Node / Capacitor
 node_modules/

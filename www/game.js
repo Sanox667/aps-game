@@ -103,6 +103,30 @@
   const unlocked = new Set();
   const has = (id) => unlocked.has(id);
 
+  // ================= ПЕРСОНАЖИ =================
+  // luck: шанс успешного монтажа; fall: шанс свалиться с лестницы при подъёме
+  // stats: множители времени (install/cable — больше = медленнее), speed/climb — больше = быстрее
+  const CHARACTERS = [
+    { id: 'sol', name: 'Соль', emoji: '⚡', luck: 0.30, fall: 0.06, speed: 1.35, climb: 1.2, install: 0.5, cable: 1,
+      desc: 'Офигенно быстрый монтаж, но криво: половину переделывать. Ловится часто.' },
+    { id: 'ilyusha', name: 'Илюша', emoji: '🧓', luck: 0.70, fall: 0.01, speed: 0.9, climb: 0.9, install: 1.7, cable: 1.1,
+      desc: '95 лет стажа, но работает как в первый раз. Медленно и надёжно.' },
+    { id: 'kalmar', name: 'Кальмар', emoji: '🦑', luck: 0.90, fall: 0.01, speed: 0.75, climb: 0.85, install: 1.85, cable: 0.9,
+      desc: 'Делает медленно, зато качественно и красиво. Брак — редкость.' },
+    { id: 'dima', name: 'Дима который Игорь', emoji: '🚿', luck: 0.50, fall: 0.03, speed: 0.7, climb: 0.8, install: 2.15, cable: 1, plumber: true,
+      desc: 'Очень медленно, но хороший сантехник. Промахнётся — поставит кран.' },
+    { id: 'volodya', name: 'Володя', emoji: '😤', luck: 0.60, fall: 0.05, speed: 1.1, climb: 1.1, install: 0.85, cable: 1, bossPass: true,
+      desc: 'Агрессивный, ругается с коллегами. На босс-объекте с шансом 60% проходит без монтажа.' },
+    { id: 'shavkat', name: 'Шавкат', emoji: '👷', luck: 0.55, fall: 0.02, speed: 1, climb: 1, install: 1.15, cable: 1.15, squad: true,
+      desc: 'Бригадир. С шансом 30% призывает бригаду из 5 узбеков на весь объект.' },
+  ];
+  function loadCharId() {
+    try {
+      const id = localStorage.getItem('aps_char');
+      return CHARACTERS.some((c) => c.id === id) ? id : 'sol';
+    } catch (e) { return 'sol'; }
+  }
+
   const keys = new Set();
   const player = {
     x: 100, y: 520 - PLAYER_H, w: PLAYER_W, h: PLAYER_H,
@@ -115,6 +139,10 @@
     timeouts: 0, time: 0, state: 'play', acceptance: false,
     spots: [], cables: [], floaters: [], sparks: [], dust: [],
     best: 0, object: OBJECTS[0], floorYs: [], ladders: [],
+    char: null, // задаётся при загрузке в самом низу
+    debuff: null, eventTimer: 18,
+    buffState: {}, buffTimer: 24, buffs: [],
+    squad: [], bossPass: false,
   };
 
   let installing = { timer: 0, total: 0, spot: null, kind: null };
@@ -386,6 +414,36 @@
 
     boss = game.object.boss ? makeBoss() : null;
 
+    // ---- персональные механики ----
+    if (!game.char) game.char = CHARACTERS.find((c) => c.id === loadCharId());
+    game.debuff = null;
+    game.eventTimer = 18 + Math.random() * 10;
+    game.buffTimer = 22 + Math.random() * 10;
+    game.buffState = {};
+    game.buffs = [];
+    game.squad = [];
+    game.bossPass = false;
+
+    if (game.char.squad && Math.random() < 0.3) {
+      const n = Math.min(5, game.floorYs.length);
+      for (let i = 0; i < n; i++) {
+        game.squad.push({
+          floor: i, x: randInt(WALL_L + 120, WALL_R - 60), timer: 2.5 + i * 1.7,
+          w: 20, h: 32, job: null,
+        });
+      }
+      showToast('Бригада удалась: ' + n + ' узбеков работают по каждому этажу!');
+      AudioSys.win();
+    } else if (game.char.squad) {
+      showToast('Бригада сегодня не приехала — работаем в одиночку.');
+    }
+
+    if (game.object.boss && game.char.bossPass && Math.random() < 0.6) {
+      game.bossPass = true;
+      startAcceptance();
+      showToast('Володя зарулил на словах: приёмка сразу, монтаж не нужен!');
+    }
+
     if (UNLOCKS[n]) {
       unlocked.add(UNLOCKS[n].id);
       showToast('Новая функция: ' + UNLOCKS[n].name + ' — ' + UNLOCKS[n].desc);
@@ -442,8 +500,46 @@
     startLevel(1);
   }
 
+  // ================= ВЫБОР ПЕРСОНАЖА =================
+  function openSelect() {
+    game.state = 'select';
+    ovTitle.textContent = 'Кто сегодня на объекте?';
+    ovText.textContent = '';
+    const saved = loadCharId();
+    ovUnlock.innerHTML = CHARACTERS.map((c, i) =>
+      '<button class="charcard' + (c.id === saved ? ' active' : '') + '" data-char="' + c.id + '">' +
+      '<span class="ce">' + c.emoji + '</span>' +
+      '<span class="cn">' + (i + 1) + '. ' + c.name + '</span>' +
+      '<span class="cd">' + c.desc + '</span>' +
+      '<span class="cs">удача ' + Math.round(c.luck * 100) + '% · падение ' + Math.round(c.fall * 100) + '%</span></button>'
+    ).join('');
+    ovBtn.hidden = true;
+    overlay.classList.remove('hidden');
+  }
+
+  function chooseChar(id) {
+    const c = CHARACTERS.find((x) => x.id === id);
+    if (!c) return;
+    game.char = c;
+    try { localStorage.setItem('aps_char', id); } catch (e) { /* приватный режим */ }
+    resetGame();
+    ovBtn.hidden = false;
+    showToast('Сегодня работает ' + c.name + '. ' + c.desc);
+  }
+
   // ================= ИГРОК =================
-  function speedFactor() { return MOVE_SPEED * (has('helmet') ? 1.25 : 1); }
+  function moveMutators() {
+    const wet = game.debuff && game.debuff.type === 'wet';
+    return {
+      speed: (game.char ? game.char.speed : 1) * (wet ? 0.8 : 1) * (game.buffState.turbo ? 1.35 : 1),
+      climb: (game.char ? game.char.climb : 1) * (wet ? 0.85 : 1),
+      fall: (game.char ? game.char.fall : 0) * (wet ? 3 : 1),
+    };
+  }
+
+  function speedFactor() {
+    return MOVE_SPEED * (has('helmet') ? 1.25 : 1) * moveMutators().speed;
+  }
 
   function movePlayer(dt) {
     const p = player;
@@ -458,7 +554,7 @@
       } else {
         p.x = ladder.x - p.w / 2;
         const dir = (keys.has('down') ? 1 : 0) - (keys.has('up') ? 1 : 0);
-        p.y = clamp(p.y + dir * CLIMB_SPEED * dt, ladder.top - p.h, ladder.bottom - p.h);
+        p.y = clamp(p.y + dir * CLIMB_SPEED * moveMutators().climb * dt, ladder.top - p.h, ladder.bottom - p.h);
         if (dir < 0 && p.y <= ladder.top - p.h) { p.climbing = null; p.vy = 0; }
         else if (dir > 0 && p.y >= ladder.bottom - p.h) { p.climbing = null; p.vy = 0; }
         return;
@@ -489,6 +585,22 @@
   }
 
   function grab(ladder) {
+    const m = moveMutators();
+    if (Math.random() < m.fall) {
+      // свалился с лестницы
+      player.climbing = null;
+      player.x = ladder.x - player.w / 2;
+      player.y = ladder.bottom - player.h;
+      player.vy = 0;
+      player.stun = 1.2;
+      game.combo = 0;
+      game.comboTimer = 0;
+      shake = 10;
+      AudioSys.caught();
+      addFloater(ladder.x, ladder.bottom - 60, 'СВАЛИЛСЯ!', '#f87171');
+      showToast('Свалился с лестницы! Комбо сгорело.');
+      return;
+    }
     player.climbing = ladder;
     player.x = ladder.x - player.w / 2;
     player.vy = 0;
@@ -523,7 +635,10 @@
       if (any) showToast('Трасса уже проложена — ставь прибор (Space)');
       return;
     }
-    const total = 0.85 * (has('crimper') ? 0.5 : 1) * (game.object.pace > 1 ? 1.1 : 1);
+    const total = 0.85 * (has('crimper') ? 0.5 : 1) * (game.object.pace > 1 ? 1.1 : 1) *
+      (game.char ? game.char.cable : 1) *
+      (game.debuff && game.debuff.type === 'nosupply' ? 3 : 1) *
+      (game.buffState.quick ? 0.55 : 1);
     installing = { timer: total, total, spot, kind: 'cable' };
     AudioSys.tone(420, 0.06, 'square', 0.06);
   }
@@ -538,7 +653,9 @@
       else if (game.acceptance) tryAccept();
       return;
     }
-    const total = 0.95 * (has('screwdriver') ? 0.55 : 1) * game.object.pace;
+    const total = 0.95 * (has('screwdriver') ? 0.55 : 1) * game.object.pace *
+      (game.char ? game.char.install : 1) *
+      (game.buffState.quick ? 0.55 : 1);
     installing = { timer: total, total, spot, kind: 'install' };
     AudioSys.installStart();
   }
@@ -564,6 +681,42 @@
     AudioSys.installStop();
     if (!spot) return;
     const device = DEVICES[spot.type];
+
+    // ==== удача персонажа ====
+    const lucky = game.char && Math.random() < game.char.luck;
+    if (!lucky) {
+      if (game.char && game.char.plumber) {
+        // Дима промазал — поставил кран
+        spot.done = true;
+        spot.san = true;
+        game.installed += 1;
+        game.combo = 0;
+        game.comboTimer = 0;
+        const gained = 2;
+        game.score += gained;
+        addFloater(spot.x, spot.y - 14, 'кран +2', '#a5f3fc');
+        AudioSys.comboUp();
+        shake = Math.min(9, shake + 3);
+        updateHud();
+        if (game.score > game.best) { game.best = game.score; saveBest(); }
+        if (game.installed >= game.goal) {
+          if (game.object.boss) startAcceptance();
+          else completeLevel();
+        }
+        return;
+      }
+      // брак: устройство придётся переделывать
+      spot.brak = true;
+      game.combo = 0;
+      game.comboTimer = 0;
+      addFloater(spot.x, spot.y - 14, 'БРАК!', '#f87171');
+      AudioSys.angry();
+      shake = Math.min(9, shake + 4);
+      updateHud();
+      return;
+    }
+
+    spot.brak = false;
     spot.done = true;
     game.installed += 1;
 
@@ -573,7 +726,8 @@
 
     game.combo += 1;
     game.comboTimer = 7;
-    const gained = Math.round(base * comboMultiplier());
+    let gained = Math.round(base * comboMultiplier());
+    if (game.buffState.dbl) gained *= 2;
     game.score += gained;
 
     addFloater(spot.x, spot.y - 14, '+' + gained, device.color);
@@ -783,9 +937,93 @@
       updateHud();
     }
 
-    if (game.combo > 0 && !has('radio') && installing.timer <= 0) {
+    if (game.combo > 0 && !has('radio') && !game.buffState.guard && installing.timer <= 0) {
       game.comboTimer -= dt;
       if (game.comboTimer <= 0) { game.combo = 0; game.comboTimer = 0; }
+    }
+
+    // помехи
+    game.eventTimer -= dt;
+    if (game.eventTimer <= 0) {
+      game.eventTimer = 20 + Math.random() * 14;
+      const kinds = ['nosupply', 'wet', 'blackout'];
+      const kind = kinds[randInt(0, kinds.length - 1)];
+      game.debuff = { type: kind, t: kind === 'wet' ? 12 : 10 };
+      if (kind === 'nosupply') showToast('Поставку гофры сорвало: кабели в 3 раза медленнее!');
+      if (kind === 'wet') showToast('Трубу прорвало: полы мокрые — можно свалиться с лестницы!');
+      if (kind === 'blackout') showToast('Свет вырубили — работаем фонариком!');
+      AudioSys.alarm();
+    }
+    if (game.debuff) {
+      game.debuff.t -= dt;
+      if (game.debuff.t <= 0) game.debuff = null;
+    }
+
+    // улучшения
+    game.buffTimer -= dt;
+    if (game.buffTimer <= 0 && game.buffs.length < 2) {
+      game.buffTimer = 22 + Math.random() * 14;
+      const bk = ['turbo', 'quick', 'dbl', 'guard'][randInt(0, 3)];
+      const names = { turbo: 'ТУРБО-БОТИНКИ', quick: 'СЪЁМНЫЙ ПАТРОН', dbl: 'ДВОЙНАЯ СМЕНА', guard: 'ЩИТ КОМБО' };
+      game.buffs.push({
+        floor: randInt(0, game.floorYs.length - 1),
+        x: randInt(WALL_L + 160, WALL_R - 60),
+        kind: bk,
+        label: names[bk],
+      });
+    }
+    for (let i = game.buffs.length - 1; i >= 0; i--) {
+      const bu = game.buffs[i];
+      if (bu.floor === onFloorPlayer() && Math.abs(bu.x - (player.x + player.w / 2)) < 28) {
+        game.buffState[bu.kind] = 12;
+        addFloater(bu.x, game.floorYs[bu.floor] - 46, bu.label, '#fde047');
+        AudioSys.win();
+        game.buffs.splice(i, 1);
+      }
+    }
+    for (const k of Object.keys(game.buffState)) {
+      if (game.buffState[k] > 0) {
+        game.buffState[k] -= dt;
+        if (game.buffState[k] <= 0) delete game.buffState[k];
+      }
+    }
+
+    // бригада Шавката
+    for (const h of game.squad) {
+      if (h.job) {
+        h.job.t -= dt;
+        if (h.job.t <= 0) {
+          const s = h.job.spot;
+          if (h.job.kind === 'cable') {
+            s.cabled = true;
+            game.cables.push({ x1: BOX_X, y1: game.floorYs[s.floor] - 30, x2: s.x, floor: s.floor, hot: 1 });
+            game.score += 2;
+            addFloater(s.x, s.y - 10, '+кабель', '#7dd3fc');
+          } else {
+            s.brak = false;
+            s.done = true;
+            game.installed += 1;
+            const pts = Math.max(1, Math.round(DEVICES[s.type].points * 0.5));
+            game.score += pts;
+            game.cables.push({ x1: BOX_X, y1: game.floorYs[s.floor] - 30, x2: s.x, floor: s.floor, hot: 1 });
+            if (!s.cabled) s.cabled = true;
+            addFloater(s.x, s.y - 10, '+' + pts + ' бригада', '#a7f3d0');
+          }
+          AudioSys.step();
+          h.job = null;
+        }
+        continue;
+      }
+      h.timer -= dt;
+      if (h.timer <= 0) {
+        h.timer = 6 + Math.random() * 2.5;
+        const target = game.spots.find((s) => s.floor === h.floor && !s.done && !s.cabled) ||
+                       game.spots.find((s) => s.floor === h.floor && !s.done && !s.brak);
+        if (target) {
+          h.job = { spot: target, kind: target.cabled ? 'install' : 'cable', t: target.cabled ? 3.2 : 1.6 };
+          h.x = target.x;
+        }
+      }
     }
 
     bossUpdate(dt);
@@ -807,6 +1045,7 @@
     game.state = 'levelup';
     AudioSys.installStop();
     AudioSys.levelEnd();
+    ovBtn.hidden = false;
     const next = game.level + 1;
     const nextUnlock = UNLOCKS[next];
     const objName = game.object.name;
@@ -1031,7 +1270,7 @@
   }
 
   function drawSpot(s, active) {
-    if (s.done) { drawDevice(s.x, s.y, s.type); return; }
+    if (s.done) { if (s.san) drawFaucet(s.x, s.y); else drawDevice(s.x, s.y, s.type); return; }
     const device = DEVICES[s.type];
     const pulse = 0.55 + 0.45 * Math.sin(game.time * 3 + s.blink);
     ctx.save();
@@ -1049,6 +1288,23 @@
     ctx.fillRect(-7, -1.5, 14, 3);
     ctx.restore();
 
+    // брак — красный крест поверх
+    if (s.brak) {
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.strokeStyle = '#f87171';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.moveTo(-9, -9); ctx.lineTo(9, 9);
+      ctx.moveTo(9, -9); ctx.lineTo(-9, 9);
+      ctx.stroke();
+      ctx.fillStyle = '#fca5a5';
+      ctx.font = '700 10px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('БРАК', s.x, s.y - 22);
+      ctx.restore();
+    }
+
     if (active === s) {
       ctx.save();
       ctx.fillStyle = s.cabled ? '#bfdbfe' : game.object.pal.wire;
@@ -1056,6 +1312,72 @@
       ctx.textAlign = 'center';
       ctx.fillText(s.cabled ? 'SPACE' : 'C', s.x, s.y - 26);
       ctx.restore();
+    }
+  }
+
+  function drawFaucet(x, y) {
+    // кран, который «который Игорь» ставит вместо АПС
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = '#94a3b8';
+    rr(-10, -4, 20, 10, 3); ctx.fill();
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillRect(-2, -14, 4, 10);
+    ctx.beginPath(); ctx.moveTo(-7, -10); ctx.lineTo(7, -10); ctx.lineTo(5, -14); ctx.lineTo(-5, -14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(-4, 6, 8, 4);
+    ctx.restore();
+  }
+
+  function drawBuffs() {
+    for (const bu of game.buffs) {
+      const fy = game.floorYs[bu.floor];
+      const pulse = 0.5 + 0.5 * Math.sin(game.time * 5 + bu.x);
+      ctx.save();
+      ctx.translate(bu.x, fy - 24);
+      ctx.shadowColor = '#fde047';
+      ctx.shadowBlur = 10 + 8 * pulse;
+      ctx.fillStyle = '#1f2d4d';
+      rr(-13, -13, 26, 26, 6); ctx.fill();
+      ctx.strokeStyle = '#fde047';
+      ctx.lineWidth = 2;
+      rr(-13, -13, 26, 26, 6); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fde047';
+      ctx.font = '500 14px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(bu.kind === 'turbo' ? '⚡' : bu.kind === 'quick' ? '🔩' : bu.kind === 'dbl' ? 'x2' : '🛡', 0, 5);
+      ctx.restore();
+    }
+  }
+
+  function drawSquad() {
+    for (const h of game.squad) {
+      const fy = game.floorYs[h.floor];
+      ctx.save();
+      ctx.translate(h.x, fy);
+      const walkBob = h.timer > 0.3 ? Math.sin(game.time * 14 + h.floor * 2) * 1.2 : 0;
+      ctx.translate(0, walkBob);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath(); ctx.ellipse(0, 1, 10, 3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1565c0';
+      rr(-7, -20, 14, 16, 3); ctx.fill();
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath(); ctx.moveTo(-6, -20); ctx.lineTo(0, -27); ctx.lineTo(6, -20); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#1f2937';
+      ctx.fillRect(-6, -4, 4, 4);
+      ctx.fillRect(2, -4, 4, 4);
+      ctx.restore();
+      if (h.job) {
+        const ratio = 1 - h.job.t / (h.job.kind === 'cable' ? 1.6 : 3.2);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(226,232,240,0.25)';
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(h.x, fy - 34, 7, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = h.job.kind === 'cable' ? game.object.pal.wire : '#4ade80';
+        ctx.beginPath(); ctx.arc(h.x, fy - 34, 7, -Math.PI / 2, -Math.PI / 2 + ratio * Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
     }
   }
 
@@ -1275,6 +1597,8 @@
     const activeSpot = installing.spot || nearestSpot();
     for (const s of game.spots) drawSpot(s, activeSpot);
     drawLayingCable();
+    drawBuffs();
+    drawSquad();
     drawPlayer();
     drawBoss();
     drawInstallProgress();
@@ -1297,6 +1621,17 @@
       ctx.fillRect(0, 0, W, H);
     }
 
+    // блэкаут-помеха: густая тьма с фонариком
+    if (game.debuff && game.debuff.type === 'blackout') {
+      const ny = player.y + player.h / 2;
+      const nx = player.x + player.w / 2;
+      const bo = ctx.createRadialGradient(nx, ny, 70, nx, ny, W * 0.7);
+      bo.addColorStop(0, 'rgba(1, 3, 8, 0)');
+      bo.addColorStop(1, 'rgba(1, 3, 8, 0.8)');
+      ctx.fillStyle = bo;
+      ctx.fillRect(0, 0, W, H);
+    }
+
     // красная тревога при дедлайне
     if (game.state === 'play' && game.shiftTime <= 10) {
       const pulse = (0.5 + 0.5 * Math.sin(game.time * 8)) * 0.28;
@@ -1310,7 +1645,7 @@
     ctx.fillStyle = '#64748b';
     ctx.font = '12px "Segoe UI", system-ui, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('Объект: ' + game.object.name + ' · монтаж АПС', 18, H - 13);
+    ctx.fillText('Объект: ' + game.object.name + ' · монтаж АПС · ' + (game.char ? game.char.name : '—'), 18, H - 13);
     ctx.textAlign = 'right';
     ctx.fillStyle = '#94a3b8';
     ctx.fillText('Смена ' + game.level + ' · осталось ' + (game.goal - game.installed), W - 18, H - 13);
@@ -1327,12 +1662,28 @@
 
   window.addEventListener('keydown', (e) => {
     const action = KEYMAP[e.code];
+    // выбор персонажа цифрами 1..6
+    if (game.state === 'select') {
+      if (/^Digit[1-6]$/.test(e.code)) {
+        e.preventDefault();
+        chooseChar(CHARACTERS[Number(e.code.slice(5)) - 1].id);
+        return;
+      }
+      if (e.code === 'Enter') {
+        e.preventDefault();
+        chooseChar(game.char ? game.char.id : loadCharId());
+        return;
+      }
+    }
     if (!action) return;
     e.preventDefault();
     AudioSys.unlock();
     if (e.repeat) return;
 
-    if (action === 'restart') { resetGame(); return; }
+    if (action === 'restart') {
+      if (game.state !== 'select') resetGame();
+      return;
+    }
     if (action === 'enter') { nextLevel(); return; }
     if (action === 'mute') { AudioSys.setMuted(!AudioSys.muted); return; }
     if (action === 'action') { tryInstall(); return; }
@@ -1346,6 +1697,14 @@
   window.addEventListener('blur', () => keys.clear());
 
   if (muteBtn) muteBtn.addEventListener('click', () => AudioSys.setMuted(!AudioSys.muted));
+
+  ovUnlock.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-char]');
+    if (btn) { AudioSys.unlock(); chooseChar(btn.getAttribute('data-char')); }
+  });
+
+  const charBtn = document.getElementById('btn-char');
+  if (charBtn) charBtn.addEventListener('click', () => { AudioSys.unlock(); openSelect(); });
 
   ovBtn.addEventListener('click', nextLevel);
 
@@ -1387,12 +1746,14 @@
   window.__aps = {
     game, player, keys, unlocked, get boss() { return boss; },
     spots: () => game.spots, floors: () => game.floorYs,
+    chars: () => CHARACTERS, chooseChar, openSelect,
     startLevel, tryInstall, tryLayCable, tryAccept, nextLevel, resetGame,
     audio: AudioSys,
   };
 
   game.best = loadBest();
   startLevel(1);
+  openSelect();
 
   let last = performance.now();
   function frame(now) {
