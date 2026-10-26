@@ -144,6 +144,7 @@
     buffState: {}, buffTimer: 24, buffs: [],
     squad: [], bossPass: false,
     leninTimer: 12,
+    droneTimer: 15, inspectTimer: 30, flood: null,
   };
 
   let installing = { timer: 0, total: 0, spot: null, kind: null };
@@ -151,6 +152,7 @@
   let shake = 0;
   let boss = null;
   let lenin = null; // начальник Ленин: гуляет и тянет монтажника на перекур
+  let drone = null; // дрон прораба: облетает объект, может упасть — стройка заново
 
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -427,6 +429,10 @@
     game.bossPass = false;
     lenin = null;
     game.leninTimer = 6 + Math.random() * 6; // Ленин приходит рано — не даёт расслабиться
+    drone = null;
+    game.droneTimer = 15 + Math.random() * 15;
+    game.inspectTimer = 26 + Math.random() * 22;
+    game.flood = null;
 
     if (game.char.squad && Math.random() < 0.3) {
       const n = Math.min(5, game.floorYs.length);
@@ -728,10 +734,132 @@
     }
   }
 
+  // ================= ДРОН ПРОРАБА =================
+  // Облетает объект. С шансом ~25% за рейс падает на стройку — уровень начинается заново.
+  function spawnDrone() {
+    const fromLeft = Math.random() < 0.5;
+    drone = {
+      x: fromLeft ? -46 : W + 46,
+      y: 24,
+      vx: (fromLeft ? 1 : -1) * (58 + Math.random() * 22),
+      vy: 0,
+      state: 'fly',
+      rot: 0,
+      willFall: Math.random() < 0.25,
+      fallAtX: randInt(WALL_L + 150, WALL_R - 150),
+    };
+    showToast('Дрон прораба облетает объект…');
+    AudioSys.tone(660, 0.1, 'square', 0.045);
+  }
+
+  function droneUpdate(dt) {
+    if (!drone) {
+      game.droneTimer -= dt;
+      if (game.droneTimer <= 0) spawnDrone();
+      return;
+    }
+    const D = drone;
+
+    if (D.state === 'fly') {
+      D.x += D.vx * dt;
+      if (D.willFall && Math.abs(D.x - D.fallAtX) < 14) {
+        D.state = 'fall';
+        D.vy = 30;
+        AudioSys.tone(880, 0.12, 'sawtooth', 0.06);
+      } else if ((D.vx > 0 && D.x > W + 60) || (D.vx < 0 && D.x < -60)) {
+        drone = null;
+        game.droneTimer = 30 + Math.random() * 26;
+      }
+      return;
+    }
+
+    // падение
+    D.vy += GRAVITY * dt;
+    D.x += D.vx * 0.25 * dt;
+    D.y += D.vy * dt;
+    D.rot += 6 * dt;
+    for (const fy of game.floorYs) {
+      if (D.y + 10 >= fy) {
+        shake = 16;
+        AudioSys.caught();
+        addFloater(D.x, fy - 40, 'ДРОН УПАЛ!', '#f87171');
+        showToast('Дрон прораба рухнул на объект — стройка начинается заново!');
+        drone = null;
+        startLevel(game.level);
+        return;
+      }
+    }
+    if (D.y > H + 40) { drone = null; game.droneTimer = 30 + Math.random() * 26; }
+  }
+
+  // ================ ПРОВЕРКА ГЕНПОДРЯДЧИКА ================
+  // Приезжает раз в ~30-60 с: поймает на перекуре — штраф, чисто — премия.
+  function inspectNow() {
+    game.inspectTimer = 34 + Math.random() * 26;
+    const px = player.x + player.w / 2;
+    const py = player.y;
+    if (lenin && (lenin.state === 'smoke' || lenin.state === 'call')) {
+      const fine = 25;
+      game.score = Math.max(0, game.score - fine);
+      game.combo = 0;
+      game.comboTimer = 0;
+      player.stun = Math.max(player.stun, 1.0);
+      shake = 10;
+      AudioSys.alarm();
+      addFloater(px, py - 14, '−' + fine + ' ШТРАФ', '#f87171');
+      showToast('Генподрядчик заметил перекур: штраф −' + fine + '!');
+    } else {
+      game.score += 10;
+      addFloater(px, py - 14, '+10 ПОРЯДОК', '#86efac');
+      AudioSys.comboUp();
+    }
+    updateHud();
+  }
+
+  function inspectUpdate(dt) {
+    game.inspectTimer -= dt;
+    if (game.inspectTimer <= 0) inspectNow();
+  }
+
+  // ================= ЗАТОПЛЕНИЕ (КРАН ДИМЫ) =================
+  function forceFlood() {
+    game.flood = { t: 16, T: 16 };
+    game.debuff = { type: 'wet', t: 16 };
+    showToast('Кран дал течь — уровень затапливает!');
+    AudioSys.alarm();
+  }
+
+  function drawFlood() {
+    if (!game.flood) return;
+    const rise = 1 - game.flood.t / game.flood.T; // 0 → 1
+    const top = H - rise * H * 0.42;
+    ctx.save();
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.20)';
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    ctx.lineTo(0, top + 5);
+    for (let x = 0; x <= W; x += 42) {
+      ctx.lineTo(x, top + Math.sin(game.time * 2.6 + x * 0.045) * 5);
+    }
+    ctx.lineTo(W, top + 5);
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fill();
+    // блики на воде
+    ctx.strokeStyle = 'rgba(165, 243, 252, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 42) {
+      const y = top + Math.sin(game.time * 2.6 + x * 0.045) * 5;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function tryLayCable() {
     if (game.state !== 'play' || installing.timer > 0 || player.stun > 0) return;
-    if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }
-    const spot = nearestSpot(false);
+    if (leninForce()) { addFloater(lenin.x, game.floorYs[lenin.floor] - 64, 'ПЕРЕКУР!', '#fbbf24'); return; }    const spot = nearestSpot(false);
     if (!spot) {
       const any = nearestSpot(true);
       if (any) showToast('Трасса уже проложена — ставь прибор (Space)');
@@ -800,6 +928,8 @@
         addFloater(spot.x, spot.y - 14, 'кран +2', '#a5f3fc');
         AudioSys.comboUp();
         shake = Math.min(9, shake + 3);
+        // кран может сорваться и затопить уровень
+        if (Math.random() < 0.35) forceFlood();
         updateHud();
         if (game.score > game.best) { game.best = game.score; saveBest(); }
         if (game.installed >= game.goal) {
@@ -1065,6 +1195,13 @@
 
     // начальник Ленин — ходит и отвлекает
     leninUpdate(dt);
+    // дрон прораба и проверка генподрядчика
+    droneUpdate(dt);
+    inspectUpdate(dt);
+    if (game.flood) {
+      game.flood.t -= dt;
+      if (game.flood.t <= 0) game.flood = null;
+    }
 
     // улучшения
     game.buffTimer -= dt;
@@ -1603,6 +1740,42 @@
     }
   }
 
+  function drawDrone() {
+    if (!drone) return;
+    const D = drone;
+    ctx.save();
+    ctx.translate(D.x, D.y);
+    if (D.state === 'fall') ctx.rotate(D.rot);
+    // корпус
+    ctx.fillStyle = '#101a30';
+    rr(-14, -5, 28, 10, 4); ctx.fill();
+    ctx.fillStyle = '#1f2d4d';
+    rr(-10, -3, 20, 6, 3); ctx.fill();
+    // мигалка
+    const blinking = Math.sin(game.time * 10) > 0;
+    ctx.fillStyle = blinking ? '#f87171' : '#7f1d1d';
+    ctx.fillRect(-3, -9, 6, 4);
+    // прожектор вниз
+    if (D.state === 'fly') {
+      const beam = ctx.createLinearGradient(0, 6, 0, 90);
+      beam.addColorStop(0, 'rgba(253, 224, 71, 0.18)');
+      beam.addColorStop(1, 'rgba(253, 224, 71, 0)');
+      ctx.fillStyle = beam;
+      ctx.beginPath();
+      ctx.moveTo(-5, 5); ctx.lineTo(5, 5); ctx.lineTo(18, 90); ctx.lineTo(-18, 90);
+      ctx.closePath(); ctx.fill();
+    }
+    // винты
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.55)';
+    ctx.lineWidth = 2;
+    for (const rx of [-11, 11]) {
+      const pw = 9 + Math.sin(game.time * 40 + rx) * 3;
+      ctx.beginPath(); ctx.moveTo(rx - pw, -7); ctx.lineTo(rx + pw, -7); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rx, -10); ctx.lineTo(rx, -5); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawLenin() {
     if (!lenin) return;
     const L = lenin;
@@ -1772,6 +1945,7 @@
     drawBoxes(pal);
     for (const c of game.cables) drawCable(c);
     drawPanel(pal);
+    drawFlood();
     const activeSpot = installing.spot || nearestSpot();
     for (const s of game.spots) drawSpot(s, activeSpot);
     drawLayingCable();
@@ -1780,6 +1954,7 @@
     drawLenin();
     drawPlayer();
     drawBoss();
+    drawDrone();
     drawInstallProgress();
     drawEffects();
 
@@ -2002,6 +2177,8 @@
     chars: () => CHARACTERS, chooseChar, openSelect,
     startLevel, tryInstall, tryLayCable, tryAccept, nextLevel, resetGame,
     summonLenin, lenin: () => lenin, fitStage, tryFullscreen,
+    drone: () => drone, forceDroneDrop: () => { if (!drone) spawnDrone(); if (drone) { drone.state = 'fall'; drone.vy = 30; } },
+    inspectForce: inspectNow, forceFlood,
     audio: AudioSys,
   };
 
